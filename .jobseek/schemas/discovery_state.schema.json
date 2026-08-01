@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JobSeek mechanical discovery frontier state",
+  "type": "object",
+  "required": ["schema_version", "track", "batch_id", "config", "partitions", "candidates", "observations", "schedule", "event_sequence", "event_tail_sha256"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "track": {"enum": ["IT", "PartTime"]},
+    "batch_id": {"type": "string", "minLength": 1},
+    "event_sequence": {"type": "integer", "minimum": 0},
+    "event_tail_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "config": {
+      "type": "object",
+      "required": ["card_observation_limit", "per_fingerprint_round_limit"],
+      "properties": {
+        "card_observation_limit": {"type": "integer", "minimum": 1, "default": 200},
+        "per_fingerprint_round_limit": {"const": 5},
+        "viable_queue_target": {"type": ["integer", "null"], "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "partitions": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/partition"}
+    },
+    "candidates": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/candidate"}
+    },
+    "observations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/observation"}
+    },
+    "schedule": {
+      "type": "object",
+      "required": ["round", "last_partition", "fingerprint_claims"],
+      "properties": {
+        "round": {"type": "integer", "minimum": 1},
+        "last_partition": {"type": ["string", "null"]},
+        "fingerprint_claims": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 5}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "partition": {
+      "type": "object",
+      "required": ["fingerprint", "boundary", "cursor", "next_cursor", "status", "observations", "windows_observed"],
+      "properties": {
+        "fingerprint": {"type": "string", "minLength": 1},
+        "boundary": {"type": "object"},
+        "cursor": {"type": ["string", "null"]},
+        "next_cursor": {"type": ["string", "null"]},
+        "status": {"enum": ["active", "saturated", "exhausted", "blocked"]},
+        "closed_due_to_batch_stop": {"type": "boolean"},
+        "stop_reason": {"type": "string", "minLength": 1},
+        "observations": {"type": "array", "items": {"$ref": "#/$defs/partition_observation"}},
+        "windows_observed": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["source", "listing_id", "url", "status", "partition_ids", "claimed_by", "full_ad_opened", "fully_assessed"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "listing_id": {"type": "string"},
+        "url": {"type": "string"},
+        "status": {"enum": ["unseen", "claimed", "full_ad_opened", "fully_assessed", "known_duplicate", "already_applied", "current_batch_assigned", "expired", "unopenable", "deferred_due_to_batch_stop"]},
+        "partition_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "first_observed_at": {"type": "string"},
+        "claimed_by": {"type": ["string", "null"]},
+        "claimed_at": {"type": "string"},
+        "claimed_partition_id": {"type": "string"},
+        "full_ad_opened": {"type": "boolean"},
+        "fully_assessed": {"type": "boolean"},
+        "job_key": {"type": ["string", "null"]},
+        "deferred_reason": {"type": ["string", "null"]},
+        "deferred_at": {"type": ["string", "null"]},
+        "terminal_reason": {"type": ["string", "null"]},
+        "terminal_evidence": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+              },
+              "additionalProperties": false
+            },
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": ["partition_id", "fingerprint", "candidate_key", "rank", "cursor", "status", "is_new", "suppressed"],
+      "properties": {
+        "partition_id": {"type": "string", "minLength": 1},
+        "fingerprint": {"type": "string", "minLength": 1},
+        "candidate_key": {"type": "string", "minLength": 1},
+        "rank": {"type": "integer", "minimum": 1},
+        "cursor": {"type": "string"},
+        "status": {"enum": ["unseen", "known_duplicate", "already_applied", "current_batch_assigned", "expired", "unopenable"]},
+        "is_new": {"type": "boolean"},
+        "suppressed": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "partition_observation": {
+      "type": "object",
+      "required": ["candidate_key", "rank", "cursor", "status", "is_new", "suppressed"],
+      "properties": {
+        "candidate_key": {"type": "string", "minLength": 1},
+        "rank": {"type": "integer", "minimum": 1},
+        "cursor": {"type": "string"},
+        "status": {"enum": ["unseen", "known_duplicate", "already_applied", "current_batch_assigned", "expired", "unopenable"]},
+        "is_new": {"type": "boolean"},
+        "suppressed": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

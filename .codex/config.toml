@@ -1,0 +1,29 @@
+[agents]
+enabled = true
+# Codex project configuration has no supported fallback_model key. The root lead
+# requests Luna/high first and may retry once with Terra/medium only when the
+# runtime explicitly reports Luna unavailable, unloaded, or unsupported.
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "high"
+max_concurrent_threads_per_session = 3
+max_depth = 1
+
+[agents.jobseek_discovery]
+description = "JobSeek discovery and ordinary assessment worker."
+config_file = "agents/jobseek-discovery.toml"
+
+[agents.jobseek_eligibility_audit]
+description = "JobSeek exception eligibility audit worker."
+config_file = "agents/jobseek-eligibility-audit.toml"
+
+[agents.jobseek_materials]
+description = "JobSeek application materials worker."
+config_file = "agents/jobseek-materials.toml"
+
+[agents.jobseek_submission]
+description = "JobSeek submission and direct-confirmation worker."
+config_file = "agents/jobseek-submission.toml"
+
+[agents.jobseek_confirmation_audit]
+description = "JobSeek exception confirmation audit worker."
+config_file = "agents/jobseek-confirmation-audit.toml"

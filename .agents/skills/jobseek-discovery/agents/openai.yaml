@@ -1,0 +1,4 @@
+interface:
+  display_name: "JobSeek Discovery"
+  short_description: "Discover and ordinarily assess a bounded job partition."
+  default_prompt: "Use $jobseek-discovery to discover and assess a bounded JobSeek partition."

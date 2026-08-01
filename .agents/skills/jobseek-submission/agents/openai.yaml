@@ -1,0 +1,4 @@
+interface:
+  display_name: "JobSeek Submission"
+  short_description: "Submit and directly verify safe JobSeek applications."
+  default_prompt: "Use $jobseek-submission to submit ready JobSeek applications safely."
