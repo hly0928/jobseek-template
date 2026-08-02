@@ -821,7 +821,13 @@ def derive_job_status(job_dir: Path) -> str:
         return "materials prepared"
     if (job_dir / "audit.json").exists():
         audit = read_json(job_dir / "audit.json")
-        return "ready for materials" if audit.get("outcome") == "Eligible" and not audit.get("remaining_items") else "waiting audit"
+        outcome = audit.get("outcome")
+        remaining_items = audit.get("remaining_items")
+        if outcome == "Eligible" and not remaining_items:
+            return "ready for materials"
+        if outcome in {"Skipped", "Blocked", "Expired", "Withdrawn"} and not remaining_items:
+            return "assessed"
+        return "waiting audit"
     assessment_path = job_dir / "assessment.json"
     if assessment_path.exists():
         assessment = read_json(assessment_path)
