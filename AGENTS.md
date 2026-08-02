@@ -1,6 +1,6 @@
 # JobSeek workspace rules
 
-The root Codex session is the only lead. It runs preflight, creates and closes batches, checks status, assigns bounded work, merges discovery, communicates with the user, records approval, archives confirmed applications, and performs final validation. It must not search for jobs, open or assess advertisements, perform eligibility audits, create CVs or Cover Letters, fill forms, or perform final submission actions.
+The root Codex session is the only lead. It runs preflight, creates and completes batches, checks status, assigns bounded work, merges discovery, communicates with the user, records approval, archives confirmed applications, and performs final validation. It must not search for jobs, open or assess advertisements, perform eligibility audits, create CVs or Cover Letters, fill forms, or perform final submission actions.
 
 Operational work must use the matching named agent:
 
@@ -27,17 +27,17 @@ Machine timestamps use offset-aware ISO 8601 in `Australia/Perth` (`+08:00`). Ne
 
 ## One active batch
 
-Only one batch may be active at a time. The root lead must not create batches in parallel or run `new-batch` while the current batch remains active.
+Each `batch.json` has `status: "active"` with `completed_at: null` or `status: "completed"` with an offset-aware `completed_at`. Only one batch may be active at a time. `new-batch` enforces this invariant and creates the unique active batch; completed batches are read-only.
 
-Do not create the next batch until all discovery outputs for the current batch have been merged, no further discovery scope is planned, all intended jobs have reached a clear working outcome, confirmed applications have been archived, `rebuild-index` has run, and history/index consistency validation passes.
+Do not run `complete-batch` until all discovery outputs for the current batch have been merged, no further discovery scope is planned, all intended jobs have reached a clear working outcome, confirmed applications have been archived, `rebuild-index` has run, and history/index consistency validation passes. Only the root lead runs `complete-batch`; do not create the next batch until it succeeds.
 
-`Skipped`, `Blocked`, `Expired`, `Withdrawn`, and a `Needs Review` job the user has decided not to continue are final working outcomes. A batch does not require every job to be submitted successfully. There is no `finalize` command or finalized state.
+`Skipped`, `Blocked`, `Expired`, `Withdrawn`, and a `Needs Review` job the user has decided not to continue are final working outcomes. A batch does not require every job to be submitted successfully.
 
 ## Discovery
 
 Run `python3 tools/jobseek.py status --batch <batch-id>` before every discovery assignment. Do not assign discovery when `discovery_should_stop` is true. Every scope must specify a source/site, query or role category, location, page/result range or maximum full opens, and current remaining assessment capacity. Concurrent maxima must not clearly exceed that capacity.
 
-Discovery workers canonicalize and check the batch reviewed-URL snapshot before opening advertisements, read complete advertisements for new jobs, assess them, and write only their assigned `discovery/*.jsonl`. The lead runs `merge-discovery`, which independently enforces snapshot history deduplication, cross-worker deduplication, minimum assessment shape, and the batch assessment cap.
+Discovery workers canonicalize and check the batch reviewed-URL snapshot before opening advertisements, read complete advertisements for new jobs, assess them, and write only their assigned `discovery/*.jsonl`. Before classifying a job as `Eligible` or `Needs Review`, compare it substantively with every previously applied or assessed job in `snapshot/reviewed-jobs.jsonl` and the current batch; exclude the same advertisement found on another platform, including matching company/title listings without evidence they are distinct openings. The lead runs `merge-discovery`, which independently enforces snapshot history URL deduplication, cross-worker URL deduplication, minimum assessment shape, and the batch assessment cap. After every merge and at the end of discovery, the lead runs `status` and reports every entry in `priority_jobs`, without sampling or omission, including outcome, title, company, source, current status, reasons, unresolved items, and canonical link. `priority_jobs` contains all current `Eligible` and `Needs Review` jobs and is derived directly from merged job files; no intermediate file is used.
 
 Discovery stops when any configured threshold is reached: 20 valid unique fully assessed new ads, 5 confirmed submissions, 3 explicit `not_submitted` confirmations with `reason_code: "submission_failure"`, or 2 confirmations with `manual_takeover: true`. It also stops when assigned scopes are exhausted, remaining results are duplicates, or access/tool restrictions prevent continuation. Eligible-job count is not a stop condition.
 

@@ -6,7 +6,7 @@ JobSeek is a human-supervised Codex workspace for bounded job discovery, truthfu
 
 The workspace is file-driven. One root lead coordinates four named agents while plain JSON, JSONL, Markdown, and document files hold current work. It deliberately avoids a database or complex workflow state machine.
 
-Only one batch may be active. Finish its intended work, archive confirmed applications, rebuild the reviewed-URL index, and validate consistency before creating the next batch.
+Only one batch may be active. `new-batch` enforces this from batch metadata. Finish its intended work, archive confirmed applications, rebuild the reviewed-URL index, validate consistency, and run `complete-batch` before creating the next batch.
 
 ## Safety model
 
@@ -32,6 +32,7 @@ preflight
 → one submission action + confirmation
 → archive
 → rebuild and validate index
+→ complete batch
 → next batch
 ```
 
@@ -45,7 +46,7 @@ preflight
 - `private/`: ignored sensitive evidence.
 - `history/`: reviewed-job source and rebuildable URL index.
 - `archive/`: application index and minimal submitted-material archives.
-- `batches/`: current working batch files; ignored except for `.gitkeep`.
+- `batches/`: active and completed batch files; `batch.json` records the state, and batch contents are ignored except for `.gitkeep`.
 - `tools/jobseek.py`: standard-library helper.
 - `.codex/agents/`: four named agent configurations.
 - `.agents/skills/`: concise worker instructions.
@@ -63,7 +64,7 @@ The default timezone is `Australia/Perth`; change `timezone` before the first ba
 
 ## Agent roles
 
-The root session is the only lead. It performs preflight, creates one batch, checks status, assigns bounded scopes, merges output, communicates with the user, records approval, archives confirmed applications, and closes the batch. It does not perform operational worker tasks.
+The root session is the only lead. It performs preflight, creates one batch, checks status, assigns bounded scopes, merges output, communicates with the user, records approval, archives confirmed applications, and completes the batch. It does not perform operational worker tasks.
 
 - `jobseek_discovery_assess`: search, canonicalize, deduplicate, open complete ads, and perform ordinary assessment.
 - `jobseek_audit`: resolve exceptional eligibility questions or inspect unclear confirmation.
@@ -79,6 +80,7 @@ python3 tools/jobseek.py preflight --track <track>
 python3 tools/jobseek.py new-batch --track <track>
 python3 tools/jobseek.py status --batch <batch-id>
 python3 tools/jobseek.py merge-discovery --batch <batch-id>
+python3 tools/jobseek.py complete-batch --batch <batch-id>
 python3 tools/jobseek.py approve --batch <batch-id> --job <job-id>
 python3 tools/jobseek.py check-approval --batch <batch-id> --job <job-id>
 python3 tools/jobseek.py archive --batch <batch-id> --job <job-id>
@@ -95,6 +97,8 @@ The default batch stops discovery when any threshold is reached:
 - 2 manual takeovers.
 
 A historical duplicate, batch duplicate, observed-only result, or invalid assessment does not consume assessment capacity. Every worker scope must be bounded by source, query/category, location, page/result range or maximum full opens, and remaining capacity.
+
+After each merge and at discovery closeout, the lead runs `status` and reports every `priority_jobs` entry without omission. This is the complete current list of `Eligible` and `Needs Review` jobs, including information and canonical links, derived directly from merged job files without an intermediate file.
 
 ## Approval and submission
 

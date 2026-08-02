@@ -235,6 +235,39 @@ def resolve_batch(batch_id: str) -> Path:
     return path
 
 
+def validate_batch_metadata(batch: Path) -> dict:
+    metadata = read_json(batch / "batch.json")
+    if metadata.get("batch_id") != batch.name:
+        raise JobSeekError(f"batch.json batch_id does not match directory: {batch.name}")
+    status = metadata.get("status")
+    if status not in {"active", "completed"}:
+        raise JobSeekError(f"batch.json status must be active or completed: {batch.name}")
+    completed_at = metadata.get("completed_at")
+    if status == "active" and completed_at is not None:
+        raise JobSeekError(f"Active batch must have completed_at null: {batch.name}")
+    if status == "completed":
+        try:
+            parse_aware_timestamp(completed_at)
+        except JobSeekError as exc:
+            raise JobSeekError(f"Completed batch requires a valid completed_at: {batch.name}") from exc
+    return metadata
+
+
+def active_batch_ids() -> list[str]:
+    active = []
+    for batch in sorted((ROOT / "batches").iterdir() if (ROOT / "batches").is_dir() else []):
+        if batch.is_dir() and (batch / "batch.json").is_file() and validate_batch_metadata(batch)["status"] == "active":
+            active.append(batch.name)
+    return active
+
+
+def require_active_batch(batch: Path) -> dict:
+    metadata = validate_batch_metadata(batch)
+    if metadata["status"] != "active":
+        raise JobSeekError(f"Batch is completed and read-only: {batch.name}")
+    return metadata
+
+
 def resolve_job(batch_id: str, job_id: str) -> Path:
     batch = resolve_batch(batch_id)
     path = batch / "jobs" / job_id
@@ -527,6 +560,9 @@ def command_preflight(args: argparse.Namespace) -> None:
 
 def command_new_batch(args: argparse.Namespace) -> None:
     command_preflight(args)
+    active = active_batch_ids()
+    if active:
+        raise JobSeekError("Cannot create a batch while another batch is active: " + ", ".join(active))
     config = workspace_config()
     policy = assessment_policy(config, args.track)
     created_at = now_in_workspace_timezone(config)
@@ -551,12 +587,21 @@ def command_new_batch(args: argparse.Namespace) -> None:
         ROOT / "profile/banks/application-answers.md": snapshot / "answer-bank.md",
         ROOT / "profile/banks/cover-letter-content.md": snapshot / "cover-letter-bank.md",
         ROOT / "profile/cv/base.docx": snapshot / "base-cv.docx",
+        ROOT / config["history"]["reviewed_jobs"]: snapshot / "reviewed-jobs.jsonl",
         ROOT / config["history"]["reviewed_url_index"]: snapshot / "reviewed-url-index.json",
     }
     for source, destination in copies.items():
         shutil.copy2(source, destination)
     write_json(snapshot / "assessment-policy.json", policy)
-    write_json(batch / "batch.json", {"batch_id": batch_id, "created_at": created_at.isoformat(), "track": args.track})
+    write_json(batch / "batch.json", {
+        "batch_id": batch_id,
+        "completed_at": None,
+        "created_at": created_at.isoformat(),
+        "status": "active",
+        "track": args.track,
+    })
+    if active_batch_ids() != [batch_id]:
+        raise JobSeekError("New batch did not become the unique active batch")
     print(batch_id)
 
 
@@ -621,7 +666,8 @@ def discovery_priority(row: dict, policy: dict) -> int:
 def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
     config = config or workspace_config()
     limits = stop_conditions(config)
-    track = read_json(batch / "batch.json").get("track")
+    batch_metadata = validate_batch_metadata(batch)
+    track = batch_metadata.get("track")
     policy = validate_batch_policy(read_json(batch / "snapshot/assessment-policy.json"), track)
     fully_assessed = confirmed = failures = takeovers = 0
     jobs_dir = batch / "jobs"
@@ -654,6 +700,8 @@ def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
         reasons.append("max_submission_failures_reached")
     if takeovers >= limits["max_manual_takeovers"]:
         reasons.append("max_manual_takeovers_reached")
+    if batch_metadata["status"] == "completed":
+        reasons.append("batch_completed")
     return {
         "fully_assessed_ads": fully_assessed,
         "confirmed_submissions": confirmed,
@@ -668,7 +716,7 @@ def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
 
 def command_merge_discovery(args: argparse.Namespace) -> None:
     batch = resolve_batch(args.batch)
-    batch_meta = read_json(batch / "batch.json")
+    batch_meta = require_active_batch(batch)
     track = batch_meta.get("track")
     config = workspace_config()
     if track not in config.get("tracks", {}):
@@ -839,18 +887,74 @@ def derive_job_status(job_dir: Path) -> str:
     return "discovered"
 
 
+def discovery_result(job_dir: Path) -> dict | None:
+    job = read_json(job_dir / "job.json")
+    assessment = read_json(job_dir / "assessment.json")
+    outcome = assessment.get("classification")
+    reasons = assessment.get("reasons") or []
+    unresolved_items = assessment.get("unresolved_items") or []
+    audit_required = bool(assessment.get("audit_required") or unresolved_items)
+    audit_summary = None
+    audit_path = job_dir / "audit.json"
+    if audit_path.is_file():
+        audit = read_json(audit_path)
+        outcome = audit.get("outcome", outcome)
+        unresolved_items = audit.get("remaining_items") or []
+        audit_required = bool(unresolved_items)
+        audit_summary = audit.get("summary")
+    if outcome not in {"Eligible", "Needs Review"}:
+        return None
+    return {
+        "audit_required": audit_required,
+        "audit_summary": audit_summary,
+        "canonical_url": job.get("canonical_url"),
+        "company": job.get("company"),
+        "job_id": job_dir.name,
+        "outcome": outcome,
+        "reasons": reasons,
+        "score_total": assessment.get("score_total"),
+        "source": job.get("source"),
+        "status": derive_job_status(job_dir),
+        "title": job.get("title"),
+        "unresolved_items": unresolved_items,
+    }
+
+
 def command_status(args: argparse.Namespace) -> None:
     batch = resolve_batch(args.batch)
+    batch_metadata = validate_batch_metadata(batch)
     rows = []
+    priority_jobs = []
     for job_dir in sorted((batch / "jobs").iterdir() if (batch / "jobs").is_dir() else []):
         if job_dir.is_dir():
             rows.append({"job_id": job_dir.name, "status": derive_job_status(job_dir)})
-    result = {"batch_id": args.batch, "jobs": rows, **batch_stop_status(batch)}
+            result = discovery_result(job_dir)
+            if result is not None:
+                priority_jobs.append(result)
+    result = {
+        "batch_id": args.batch,
+        "batch_status": batch_metadata["status"],
+        "completed_at": batch_metadata["completed_at"],
+        "jobs": rows,
+        "priority_jobs": priority_jobs,
+        **batch_stop_status(batch),
+    }
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def command_complete_batch(args: argparse.Namespace) -> None:
+    batch = resolve_batch(args.batch)
+    metadata = require_active_batch(batch)
+    command_preflight(argparse.Namespace(track=metadata["track"]))
+    metadata["status"] = "completed"
+    metadata["completed_at"] = now_in_workspace_timezone(workspace_config()).isoformat()
+    write_json(batch / "batch.json", metadata)
+    print(f"completed {args.batch}")
 
 
 def command_approve(args: argparse.Namespace) -> None:
     job_dir = resolve_job(args.batch, args.job)
+    require_active_batch(job_dir.parents[1])
     review_hash, hashes = validate_review(job_dir)
     write_json(job_dir / "submission/approval.json", {
         "job_id": args.job,
@@ -864,6 +968,7 @@ def command_approve(args: argparse.Namespace) -> None:
 
 def command_check_approval(args: argparse.Namespace) -> None:
     job_dir = resolve_job(args.batch, args.job)
+    require_active_batch(job_dir.parents[1])
     print(json.dumps(approval_check(job_dir), ensure_ascii=False, sort_keys=True))
 
 
@@ -883,6 +988,7 @@ def archive_attachment_name(kind: str, source: Path, used: set[str]) -> str:
 
 def command_archive(args: argparse.Namespace) -> None:
     job_dir = resolve_job(args.batch, args.job)
+    require_active_batch(job_dir.parents[1])
     review_hash, hashes = validate_review(job_dir)
     confirmation = validate_confirmation(job_dir)
     if confirmation.get("status") != "confirmed":
@@ -1011,6 +1117,9 @@ def parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status")
     status.add_argument("--batch", required=True)
     status.set_defaults(func=command_status)
+    complete_batch = sub.add_parser("complete-batch")
+    complete_batch.add_argument("--batch", required=True)
+    complete_batch.set_defaults(func=command_complete_batch)
     approve = sub.add_parser("approve")
     approve.add_argument("--batch", required=True)
     approve.add_argument("--job", required=True)

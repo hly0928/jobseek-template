@@ -1,4 +1,6 @@
 import argparse
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -65,7 +67,13 @@ class JobSeekTest(unittest.TestCase):
         (batch / "discovery").mkdir(parents=True, exist_ok=True)
         (batch / "jobs").mkdir(exist_ok=True)
         (batch / "snapshot").mkdir(exist_ok=True)
-        jobseek.write_json(batch / "batch.json", {"batch_id": batch.name, "track": "it", "created_at": "2026-08-03T00:00:00Z"})
+        jobseek.write_json(batch / "batch.json", {
+            "batch_id": batch.name,
+            "completed_at": None,
+            "created_at": "2026-08-03T00:00:00Z",
+            "status": "active",
+            "track": "it",
+        })
         jobseek.write_json(batch / "snapshot/reviewed-url-index.json", {})
         jobseek.write_json(batch / "snapshot/assessment-policy.json", jobseek.assessment_policy(jobseek.workspace_config(), "it"))
         return batch
@@ -372,15 +380,73 @@ class JobSeekTest(unittest.TestCase):
             jobseek.command_preflight(argparse.Namespace(track="unknown"))
 
     def test_new_batch_freezes_assessment_policy(self):
+        reviewed = {"job_id": "seek-1", "canonical_url": "https://seek.com.au/job/1", "company": "Example", "title": "Support Officer"}
+        jobseek.write_jsonl(self.root / "history/reviewed-jobs.jsonl", [reviewed])
+        jobseek.rebuild_index()
         jobseek.command_new_batch(argparse.Namespace(track="it"))
         batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
         policy_path = batch / "snapshot/assessment-policy.json"
         policy = jobseek.read_json(policy_path)
         self.assertEqual(policy["eligible_threshold"], 70)
+        self.assertEqual(jobseek.read_jsonl(batch / "snapshot/reviewed-jobs.jsonl"), [reviewed])
+        jobseek.write_jsonl(self.root / "history/reviewed-jobs.jsonl", [])
+        self.assertEqual(jobseek.read_jsonl(batch / "snapshot/reviewed-jobs.jsonl"), [reviewed])
         config = jobseek.read_json(self.root / "config/workspace.json")
         config["eligible_threshold"] = 80
         jobseek.write_json(self.root / "config/workspace.json", config)
         self.assertEqual(jobseek.read_json(policy_path)["eligible_threshold"], 70)
+
+    def test_new_batch_requires_no_active_batch(self):
+        first = self.make_batch()
+        with self.assertRaises(jobseek.JobSeekError):
+            jobseek.command_new_batch(argparse.Namespace(track="part-time"))
+        jobseek.command_complete_batch(argparse.Namespace(batch=first.name))
+        jobseek.command_new_batch(argparse.Namespace(track="part-time"))
+        self.assertEqual(len(jobseek.active_batch_ids()), 1)
+        self.assertTrue(jobseek.active_batch_ids()[0].endswith("__part-time__001"))
+
+    def test_complete_batch_sets_offset_aware_marker(self):
+        batch = self.make_batch()
+        completed_at = dt.datetime(2026, 8, 3, 12, 0, tzinfo=jobseek.ZoneInfo("Australia/Perth"))
+        with mock.patch.object(jobseek, "now_in_workspace_timezone", return_value=completed_at):
+            jobseek.command_complete_batch(argparse.Namespace(batch=batch.name))
+        metadata = jobseek.validate_batch_metadata(batch)
+        self.assertEqual(metadata["status"], "completed")
+        self.assertEqual(metadata["completed_at"], "2026-08-03T12:00:00+08:00")
+        self.assertIn("batch_completed", jobseek.batch_stop_status(batch)["stop_reasons"])
+        with self.assertRaises(jobseek.JobSeekError):
+            jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+
+    def test_discovery_results_include_all_eligible_and_needs_review_jobs(self):
+        batch = self.make_batch()
+        eligible = self.add_assessed_job(batch, 1)
+        eligible_job = jobseek.read_json(eligible / "job.json")
+        eligible_job.update({
+            "canonical_url": "https://seek.com.au/job/1",
+            "company": "Eligible Co",
+            "source": "SEEK",
+            "title": "Support Officer",
+        })
+        jobseek.write_json(eligible / "job.json", eligible_job)
+        review = self.add_assessed_job(batch, 2)
+        review_job = jobseek.read_json(review / "job.json")
+        review_job.update({
+            "canonical_url": "https://seek.com.au/job/2",
+            "company": "Review Co",
+            "source": "SEEK",
+            "title": "Systems Officer",
+        })
+        jobseek.write_json(review / "job.json", review_job)
+        assessment = jobseek.read_json(review / "assessment.json")
+        assessment.update({"classification": "Needs Review", "unresolved_items": ["Work rights wording"]})
+        jobseek.write_json(review / "assessment.json", assessment)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            jobseek.command_status(argparse.Namespace(batch=batch.name))
+        results = json.loads(output.getvalue())["priority_jobs"]
+        self.assertEqual([item["outcome"] for item in results], ["Eligible", "Needs Review"])
+        self.assertEqual(results[0]["canonical_url"], "https://seek.com.au/job/1")
+        self.assertEqual(results[1]["unresolved_items"], ["Work rights wording"])
 
     def test_stop_status_at_twenty_and_nineteen_assessments(self):
         batch = self.make_batch()
