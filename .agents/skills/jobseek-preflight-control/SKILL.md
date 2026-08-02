@@ -7,53 +7,18 @@ description: Allocate the next canonical JobSeek batch ID with immutable inputs,
 
 The root session performs preflight directly; this is not a delegated worker role. Read root `AGENTS.md`, `.jobseek/config.json`, and compact `jobseekctl` state only. Never read private details, advertisements, browser pages, full event history, or growing Tracker/log content.
 
-The project default for every bounded subagent is `gpt-5.6-luna` with `high`
-reasoning, configured in `.codex/config.toml`. Codex has no supported project
-fallback-model field. Only an explicit runtime unavailable, unloaded, or
-unsupported error permits the root lead to retry the same spawn once with
-`gpt-5.6-terra` and `medium`; ordinary task, tool, or quality failures do not.
+The project default for every bounded subagent is `gpt-5.6-luna` with `high` reasoning, configured in `.codex/config.toml`. Codex has no supported project fallback-model field. Only an explicit runtime unavailable, unloaded, or unsupported error permits the root lead to retry the same spawn once with `gpt-5.6-terra` and `medium`; ordinary task, tool, or quality failures do not.
 
 For a new batch, run `tools/jobseekctl preflight --track <track> --new-batch` and use the returned `batch_id`. Never construct a new ID. The tool allocates the workspace-wide sequence under an exclusive lock, so each new number is exactly the previous allocation plus one. For resume only, run `tools/jobseekctl preflight --track <track> --batch-id <existing-id>`. The result includes `worker_runtime`. Every bounded worker must be launched with `worker_runtime.project_root` as its working directory, the returned environment, and `worker_runtime.control_entrypoint` for every CLI call; never launch it from the mutable repository root or invoke a different controller. `jobseekctl runtime-context --track <track> --batch-id <id>` re-reads this launch contract.
 
 For a new batch, require every configured input, reject unresolved placeholders, and verify that the base CV is a readable DOCX. Creation atomically copies Candidate Profile, Search Criteria, Track Profile, answer/content banks, base CV, agent/config, rules, schemas, and control code into the batch and hashes every copy. For resume, validate only that batch's snapshot. Source edits are normal and affect only new batches. Stop only if the batch snapshot is missing, damaged, or changed, or if identity/state is invalid.
 
-Schema-v1 batches use an immutable `legacy_v1_defaults` policy when no manifest
-policy exists. Candidate facts and all original authority inputs are never rebuilt
-from changed sources: on first resume, every non-control input must still match
-the manifest hash. The controller then creates a batch-local agent project that
-combines those original inputs with the current mandatory review/audit safety
-controller, records the explicit `legacy_v1_mandatory_controls_v2` migration, and
-freezes it. Later commands dispatch to that runtime, so subsequent source,
-track-config, Skill, agent-config, or controller edits cannot change the batch.
-Changed or missing original inputs fail closed as
-`legacy_candidate_snapshot_unavailable`.
+Schema-v1 batches use an immutable `legacy_v1_defaults` policy when no manifest policy exists. Candidate facts and all original authority inputs are never rebuilt from changed sources: on first resume, every non-control input must still match the manifest hash. The controller then creates a batch-local agent project that combines those original inputs with the current mandatory review/audit safety controller, records the explicit `legacy_v1_mandatory_controls_v2` migration, and freezes it. Later commands dispatch to that runtime, so subsequent source, track-config, Skill, agent-config, or controller edits cannot change the batch. Changed or missing original inputs fail closed as `legacy_candidate_snapshot_unavailable`.
 
 Preserve legacy noncanonical directories without renaming or rewriting. Legacy batches without snapshots use compatibility reads and do not reset allocation. A missing or stale derived cache may be rebuilt; never infer a fact.
 
-Agent-call limits are frozen in the batch policy. A no-yield circuit is scoped to
-its worker role, so discovery cannot disable materials, submission, or audit.
-When a call budget, role circuit, or per-job retry limit pauses the batch, continue
-only after the user explicitly authorises
-`jobseekctl resume-agent-calls` with recorded evidence. An active call must instead
-be completed with `record-agent-call --phase complete` using the same `call_id`;
-do not create a replacement call to clear finalization. A job-scoped reset clears
-only that job/role retry scope. If the role-wide no-yield circuit is still open,
-the job reset is rejected and the output requires a role-wide reset; only the
-role-wide command reports `role_circuit_reset=true`. The event preserves the base
-policy and records any bounded extension; reserve closeout calls for drain,
-confirmation, and safe finalisation.
+Agent-call limits are frozen in the batch policy. A no-yield circuit is scoped to its worker role, so discovery cannot disable materials, submission, or audit. When a call budget, role circuit, or per-job retry limit pauses the batch, continue only after the user explicitly authorises `jobseekctl resume-agent-calls` with recorded evidence. An active call must instead be completed with `record-agent-call --phase complete` using the same `call_id`; do not create a replacement call to clear finalization. A job-scoped reset clears only that job/role retry scope. If the role-wide no-yield circuit is still open, the job reset is rejected and the output requires a role-wide reset; only the role-wide command reports `role_circuit_reset=true`. The event preserves the base policy and records any bounded extension; reserve closeout calls for drain, confirmation, and safe finalisation.
 
-Treat `material_risk` and `state_unreliable` as explicit, unresolved control
-signals rather than ordinary completion conditions. They take priority over normal
-completion and prohibit finalization. After repairing the underlying issue, the
-lead may resolve each signal only with recorded user authorization and evidence:
-`jobseekctl resolve-control-signal --track <track> --batch-id <id> --signal-id
-<id> --user-authorized --evidence-path <path>`. Do not infer a resolution from a
-successful validation, a new search result, or a later state transition.
+Treat `material_risk` and `state_unreliable` as explicit, unresolved control signals rather than ordinary completion conditions. They take priority over normal completion and prohibit finalization. After repairing the underlying issue, the lead may resolve each signal only with recorded user authorization and evidence: `jobseekctl resolve-control-signal --track <track> --batch-id <id> --signal-id <id> --user-authorized --evidence-path <path>`. Do not infer a resolution from a successful validation, a new search result, or a later state transition.
 
-Closeout reserve permits calls that drain already observed discovery candidates;
-when none exist but search expansion remains necessary, `check-stop` must expose
-the `discovery_budget_reserved_for_closeout` pause. When the consecutive
-submission-failure stop is reached, use `terminalize-failure-limit` with explicit
-lead evidence to terminalize the affected failed jobs; finalization must not
-require another submission retry.
+Closeout reserve permits calls that drain already observed discovery candidates; when none exist but search expansion remains necessary, `check-stop` must expose the `discovery_budget_reserved_for_closeout` pause. When the consecutive submission-failure stop is reached, use `terminalize-failure-limit` with explicit lead evidence to terminalize the affected failed jobs; finalization must not require another submission retry.

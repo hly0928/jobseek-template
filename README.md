@@ -33,7 +33,7 @@ It provides:
 * `.codex/config.toml` defines the bounded worker configuration supplied with this template.
 * `tools/jobseekctl` validates snapshots, ownership, evidence, event-derived counters, state transitions, review and approval gates, submission attempts, and confirmation.
 
-The included Codex configuration requests `gpt-5.6-luna` with `high` reasoning for bounded workers. Model availability can vary by environment; review `.codex/config.toml` before use and select an available model when necessary. The workflow must not silently switch models after an ordinary task or tool failure.
+The included Codex configuration requests `gpt-5.6-luna` with `high` reasoning for bounded workers. Only an explicit runtime report that Luna is unavailable, unloaded, or unsupported permits the root lead to retry the same bounded call once with `gpt-5.6-terra` and `medium`; ordinary task, tool, or quality failures do not permit a model switch.
 
 ## Quick start
 
