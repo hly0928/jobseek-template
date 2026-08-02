@@ -75,14 +75,14 @@ Repository configuration requests `gpt-5.6-terra` with medium reasoning for suba
 ## Commands
 
 ```sh
-python tools/jobseek.py preflight --track <track>
-python tools/jobseek.py new-batch --track <track>
-python tools/jobseek.py status --batch <batch-id>
-python tools/jobseek.py merge-discovery --batch <batch-id>
-python tools/jobseek.py approve --batch <batch-id> --job <job-id>
-python tools/jobseek.py check-approval --batch <batch-id> --job <job-id>
-python tools/jobseek.py archive --batch <batch-id> --job <job-id>
-python tools/jobseek.py rebuild-index
+python3 tools/jobseek.py preflight --track <track>
+python3 tools/jobseek.py new-batch --track <track>
+python3 tools/jobseek.py status --batch <batch-id>
+python3 tools/jobseek.py merge-discovery --batch <batch-id>
+python3 tools/jobseek.py approve --batch <batch-id> --job <job-id>
+python3 tools/jobseek.py check-approval --batch <batch-id> --job <job-id>
+python3 tools/jobseek.py archive --batch <batch-id> --job <job-id>
+python3 tools/jobseek.py rebuild-index
 ```
 
 ## Discovery limits
@@ -111,8 +111,8 @@ Tracked profile, track, history, and archive index files become sensitive after 
 ## Tests
 
 ```sh
-python -m unittest discover -s tests -v
-python -m py_compile tools/jobseek.py
+python3 -m unittest discover -s tests -v
+python3 -m py_compile tools/jobseek.py
 ```
 
 See `START.md` for first-run steps, common prompts, approval points, and batch closeout.

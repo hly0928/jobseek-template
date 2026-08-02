@@ -439,7 +439,7 @@ def command_preflight(args: argparse.Namespace) -> None:
         raise JobSeekError(f"Track directory does not exist: {tracks[args.track]['directory']}")
     index_path = ROOT / config["history"]["reviewed_url_index"]
     if not index_path.is_file():
-        raise JobSeekError("Reviewed URL index is missing; run: python tools/jobseek.py rebuild-index")
+        raise JobSeekError("Reviewed URL index is missing; run: python3 tools/jobseek.py rebuild-index")
     required = [
         ROOT / "profile/candidate-profile.md",
         ROOT / "profile/cv/base.docx",
@@ -490,9 +490,9 @@ def command_preflight(args: argparse.Namespace) -> None:
     try:
         actual_index = read_json(index_path)
     except JobSeekError as exc:
-        raise JobSeekError("Reviewed URL index is invalid; run: python tools/jobseek.py rebuild-index") from exc
+        raise JobSeekError("Reviewed URL index is invalid; run: python3 tools/jobseek.py rebuild-index") from exc
     if actual_index != expected_index:
-        raise JobSeekError("Reviewed URL index is stale; run: python tools/jobseek.py rebuild-index")
+        raise JobSeekError("Reviewed URL index is stale; run: python3 tools/jobseek.py rebuild-index")
     application_ids = [row.get("application_id") for row in application_rows]
     if len(application_ids) != len(set(application_ids)):
         raise JobSeekError("Duplicate application_id in archive index")

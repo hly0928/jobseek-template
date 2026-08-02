@@ -36,9 +36,9 @@ The shipped defaults stop at 20 fully assessed new ads, 5 confirmed submissions,
 Run:
 
 ```sh
-python -m unittest discover -s tests -v
-python tools/jobseek.py rebuild-index
-python tools/jobseek.py preflight --track it
+python3 -m unittest discover -s tests -v
+python3 tools/jobseek.py rebuild-index
+python3 tools/jobseek.py preflight --track it
 ```
 
 Preflight should fail clearly until placeholders are replaced and `profile/cv/base.docx` exists. Fix the stated inputs; do not weaken validation.
@@ -48,8 +48,8 @@ Preflight should fail clearly until placeholders are replaced and `profile/cv/ba
 Only one batch may be active. After preflight passes:
 
 ```sh
-python tools/jobseek.py new-batch --track it
-python tools/jobseek.py status --batch <batch-id>
+python3 tools/jobseek.py new-batch --track it
+python3 tools/jobseek.py status --batch <batch-id>
 ```
 
 The normal sequence is:
@@ -77,13 +77,13 @@ The submission agent fills one application and writes `submission/review.json`, 
 If you approve that exact version, the root lead runs:
 
 ```sh
-python tools/jobseek.py approve --batch <batch-id> --job <job-id>
+python3 tools/jobseek.py approve --batch <batch-id> --job <job-id>
 ```
 
 Immediately before the final action, the submission agent runs:
 
 ```sh
-python tools/jobseek.py check-approval --batch <batch-id> --job <job-id>
+python3 tools/jobseek.py check-approval --batch <batch-id> --job <job-id>
 ```
 
 Only `allowed: true` permits one click. Any review or material change invalidates approval. After the click, write confirmation immediately. An unclear result consumes approval and must not be blindly retried.
@@ -91,7 +91,7 @@ Only `allowed: true` permits one click. Any review or material change invalidate
 When confirmed, archive with:
 
 ```sh
-python tools/jobseek.py archive --batch <batch-id> --job <job-id>
+python3 tools/jobseek.py archive --batch <batch-id> --job <job-id>
 ```
 
 ## 6. Close the batch
@@ -102,7 +102,7 @@ Before another `new-batch`:
 - plan no further discovery scopes;
 - give every intended job a clear working outcome;
 - archive every confirmed submission;
-- run `python tools/jobseek.py rebuild-index`;
+- run `python3 tools/jobseek.py rebuild-index`;
 - run preflight to validate history/index consistency;
 - report any remaining unresolved item to the user.
 
@@ -174,7 +174,7 @@ Close out the current batch without creating another one. Ensure all discovery o
 
 - **Placeholder failure:** replace the named placeholder with verified content.
 - **Missing base CV:** add a readable `profile/cv/base.docx`; never use another person's CV.
-- **Stale index:** run `python tools/jobseek.py rebuild-index`, then preflight again.
+- **Stale index:** run `python3 tools/jobseek.py rebuild-index`, then preflight again.
 - **Historical duplicate:** do not reopen it; merge reports the snapshot match.
 - **Stop threshold reached:** stop discovery and work only on current jobs or batch closeout.
 - **Approval invalid:** regenerate review after any page, answer, declaration, attachment, or material change and obtain new approval.
