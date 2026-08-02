@@ -1,4 +1,0 @@
-interface:
-  display_name: "JobSeek Preflight Control"
-  short_description: "Lock track, initialise cache and gate a JobSeek batch."
-  default_prompt: "Use $jobseek-preflight-control to allocate the next canonical JobSeek batch or safely resume an existing one."

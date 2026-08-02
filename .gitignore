@@ -1,34 +1,32 @@
 .DS_Store
 **/.DS_Store
-__MACOSX/
-**/__MACOSX/
 ._*
 **/._*
+__MACOSX/
+**/__MACOSX/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
 *.tmp
 *.lock
 
-# Private and generated artifacts should remain local unless intentionally secured.
-Profile/Private_Details.md
-.jobseek/cache/
-.jobseek/batches/
-*/Applications/**
-!*/Applications/README.md
-!*/Applications/.gitkeep
-*/Tracker/**
-!*/Tracker/README.md
-!*/Tracker/*.example.jsonl
-*/Logs/**
-!*/Logs/README.md
-!*/Logs/*.example.md
-CV/Evidence/**
-!CV/Evidence/README.md
-!CV/Evidence/**/*.example.*
-**/materials/**/*.docx
-**/materials/**/*.pdf
-**/evidence/**
-!**/evidence/README.md
-!**/evidence/**/*.example.*
-**/*sensitive*.json
-**/*private-details*
+# Sensitive evidence is never public.
+private/*
+!private/README.md
+!private/evidence/
+private/evidence/*
+!private/evidence/.gitkeep
+
+# Batch working files contain advertisements and tailored materials.
+batches/*
+!batches/.gitkeep
+
+# Candidate CVs and master documents are local inputs.
+profile/cv/*.docx
+profile/cv/*.pdf
+profile/cv/masters/*
+!profile/cv/masters/.gitkeep
+
+# Submitted materials stay local.
+archive/applications/*
+!archive/applications/.gitkeep

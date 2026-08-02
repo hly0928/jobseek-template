@@ -1,4 +1,0 @@
-interface:
-  display_name: "JobSeek Eligibility Audit"
-  short_description: "Audit only triggered JobSeek eligibility exceptions."
-  default_prompt: "Use $jobseek-eligibility-audit to audit a triggered eligibility exception."

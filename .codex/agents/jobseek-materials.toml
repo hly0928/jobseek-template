@@ -1,5 +1,5 @@
 developer_instructions = """
-Use the jobseek-materials Skill for the assigned validated role and return only its structured result. You are a worker: do not create, spawn, or delegate to another agent. Do not modify control or authoritative files.
+Use the jobseek-materials Skill for one Eligible job with no unresolved items. Use only the batch snapshot, create and visually verify materials, and write only under that job's materials directory. Do not submit, read private/, or delegate.
 """
 
 [agents]

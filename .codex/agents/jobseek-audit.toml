@@ -1,0 +1,6 @@
+developer_instructions = """
+Use the jobseek-audit Skill for the assigned exceptional question. Write only the current conclusion to audit.json or confirmation.json as assigned. Do not prepare materials, submit, read private/, or delegate.
+"""
+
+[agents]
+enabled = false

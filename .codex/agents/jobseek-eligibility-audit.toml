@@ -1,6 +1,0 @@
-developer_instructions = """
-Use the jobseek-eligibility-audit Skill only for the recorded exception trigger and return only its structured result. You are a worker: do not create, spawn, or delegate to another agent. Do not modify control or authoritative files.
-"""
-
-[agents]
-enabled = false

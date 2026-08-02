@@ -1,6 +1,0 @@
-developer_instructions = """
-Use the jobseek-discovery Skill for the assigned bounded partition. Do not reduce the assigned scope because of elapsed time. Send compact structured `running` heartbeats at the Skill checkpoints, and return only its structured final result after the scope is safely checkpointed. You are a worker: do not create, spawn, or delegate to another agent. Do not modify control or authoritative files.
-"""
-
-[agents]
-enabled = false

@@ -1,0 +1,54 @@
+{
+  "archive": {
+    "applications_directory": "archive/applications",
+    "applications_index": "archive/applications.jsonl"
+  },
+  "eligible_threshold": 70,
+  "hard_exclusions": {
+    "location_schedule": "A mandatory location, attendance, schedule, or employment type conflicts with the candidate and track snapshot.",
+    "mandatory_credential": "A mandatory licence, certification, clearance, or credential is not established by the candidate snapshot.",
+    "mandatory_experience_or_qualification": "A clearly mandatory experience, qualification, or knowledge requirement is confirmed not met by the candidate snapshot.",
+    "track_scope": "The role falls outside the selected track or violates its exclusions.",
+    "work_authorisation": "The advertisement mandates a work-authorisation status that the candidate snapshot does not establish."
+  },
+  "history": {
+    "reviewed_jobs": "history/reviewed-jobs.jsonl",
+    "reviewed_url_index": "history/reviewed-url-index.json"
+  },
+  "score_components": {
+    "application_feasibility": 10,
+    "candidate_evidence": 25,
+    "legitimacy": 10,
+    "logistics": 15,
+    "role_fit": 40
+  },
+  "stop_conditions": {
+    "max_fully_assessed_ads": 20,
+    "max_manual_takeovers": 2,
+    "max_submission_failures": 3,
+    "target_confirmed_submissions": 5
+  },
+  "timezone": "Australia/Perth",
+  "tracks": {
+    "it": {
+      "directory": "tracks/it",
+      "scope_exclusions": [
+        "sales-dominated roles",
+        "primarily manual roles",
+        "unpaid or suspicious roles",
+        "defence roles requiring unsupported citizenship or clearance"
+      ]
+    },
+    "part-time": {
+      "directory": "tracks/part-time",
+      "scope_exclusions": [
+        "full-time five-day roles",
+        "cleaning, food packing, production-line or factory work",
+        "heavy manual warehouse work",
+        "cold-calling, commission-only or door-to-door sales",
+        "high-volume call-centre work",
+        "unpaid or suspicious roles"
+      ]
+    }
+  }
+}

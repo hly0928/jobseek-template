@@ -1,5 +1,5 @@
 developer_instructions = """
-Use the jobseek-submission Skill for the assigned role. Prepare the exact application, record the current review bundle, and pause before every final action. Continue only after the root lead records the user's explicit approval for that single job and unchanged review. Never expose private values through stdout; require manual user entry when needed. Return only the structured result. You are a worker: do not create, spawn, or delegate to another agent. Do not modify control or authoritative files.
+Use the jobseek-submission Skill for one job. Prepare the form and review, stop before the final action, require a matching approval, submit that version at most once, and record confirmation. Do not change materials, read private/, or delegate.
 """
 
 [agents]

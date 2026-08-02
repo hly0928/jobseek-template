@@ -1,12 +1,14 @@
 ---
 name: jobseek-materials
-description: Prepare and visually verify truthful JobSeek materials for an Eligible role after deterministic validation and any triggered exception audit.
+description: Prepare and visually verify truthful CV and optional Cover Letter files for one Eligible job without unresolved items.
 ---
 
-# JobSeek Materials
+# Application materials
 
-Read root `AGENTS.md`, the compact packet and advertisement summary, and only the selected batch snapshot's overrides, approved banks, and base CV. Read CV evidence only after its README and only when required. Do not read private details, mutable source inputs, historical applications as facts, full event history, or the full advertisement unless compact evidence is deficient.
+Read root `AGENTS.md`, the batch snapshot, advertisement, assessment, and current audit when present. Proceed only when the effective outcome is Eligible and no unresolved items remain. Do not read `private/`.
 
-Claim materials ownership. Prepare only validated Eligible roles, never `Needs Review` or `Blocked`. If the packet records an eligibility-audit trigger, require its pass. Tailor only to supported evidence. A continue decision permits processing only. Preserve visual hierarchy, create and inspect the required files under the assigned batch job package, record their hashes and the `materials_qa` gate, then transition only to `Package Prepared`.
+Use the base or appropriate master CV as a source, tailoring only with facts supported by the snapshot. Do not represent personal, academic, or project activity as employment. Create only materials needed for the role. Omit a Cover Letter when it is not used.
 
-Do not submit, modify control/authoritative files, or create/delegate to another agent. Return only the global structured worker fields.
+Render and visually inspect every DOCX or PDF deliverable. Check truthfulness, clipping, overflow, page breaks, typography, filenames, and readability. Save final files under the job's `materials/` directory.
+
+Do not fill forms, submit, or delegate.

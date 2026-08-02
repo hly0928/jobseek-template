@@ -1,4 +1,0 @@
-interface:
-  display_name: "JobSeek Confirmation Audit"
-  short_description: "Audit abnormal JobSeek confirmation evidence only."
-  default_prompt: "Use $jobseek-confirmation-audit to audit triggered abnormal confirmation evidence."
