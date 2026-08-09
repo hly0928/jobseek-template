@@ -21,6 +21,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 ROOT = Path(__file__).resolve().parents[1]
 TRACKING_KEYS = {"tracking", "trackingid", "ref", "referrer", "source", "campaign"}
 ASSESSMENT_CLASSIFICATIONS = {"Eligible", "Skipped", "Needs Review", "Blocked", "Expired", "Withdrawn"}
+EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+APPLICATION_EMAIL_FIELD_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:Preferred application email|Application email)\s*:\s*(\S+)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+SNAPSHOT_MANIFEST_VERSION = 1
 
 
 class JobSeekError(RuntimeError):
@@ -161,6 +167,153 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def docx_xml_strings(path: Path) -> list[str]:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if "word/document.xml" not in archive.namelist():
+                raise JobSeekError(f"{path.name} is not a readable Word document")
+            return [
+                archive.read(name).decode("utf-8", errors="replace")
+                for name in archive.namelist()
+                if name.startswith("word/") and (name.endswith(".xml") or name.endswith(".rels"))
+            ]
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise JobSeekError(f"{path.name} is not readable: {exc}") from exc
+
+
+def docx_emails(path: Path) -> set[str]:
+    return {match.group(0).lower() for text in docx_xml_strings(path) for match in EMAIL_RE.finditer(text)}
+
+
+def preferred_application_email(profile_text: str) -> str:
+    emails = declared_application_emails(profile_text)
+    if len(emails) != 1:
+        raise JobSeekError("candidate-profile.md requires one valid application email declaration")
+    return next(iter(emails))
+
+
+def declared_application_emails(text: str) -> set[str]:
+    values = [match.group(1) for match in APPLICATION_EMAIL_FIELD_RE.finditer(text)]
+    if any(not EMAIL_RE.fullmatch(value) for value in values):
+        raise JobSeekError("application email declaration is invalid")
+    return {value.lower() for value in values}
+
+
+def cv_strategy_paths() -> list[Path]:
+    directory = ROOT / "profile/cv/strategies"
+    return sorted(path for path in directory.glob("*.md") if path.is_file() and not path.is_symlink())
+
+
+def validate_live_material_inputs(track_dir: Path) -> list[Path]:
+    profile_path = ROOT / "profile/candidate-profile.md"
+    base_cv = ROOT / "profile/cv/base.docx"
+    other_material_markdown = [
+        ROOT / "profile/banks/application-answers.md",
+        ROOT / "profile/banks/cover-letter-content.md",
+        track_dir / "profile.md",
+        track_dir / "answer-overrides.md",
+    ]
+    profile_text = profile_path.read_text(encoding="utf-8")
+    expected_email = preferred_application_email(profile_text)
+    for path in other_material_markdown:
+        emails = declared_application_emails(path.read_text(encoding="utf-8"))
+        if any(email != expected_email for email in emails):
+            raise JobSeekError(
+                f"Authoritative application email conflict in {path.relative_to(ROOT)}: "
+                + ", ".join(sorted(emails | {expected_email}))
+            )
+    base_emails = docx_emails(base_cv)
+    if expected_email not in base_emails:
+        raise JobSeekError(
+            "Authoritative application email conflict between candidate-profile.md and base.docx: "
+            + ", ".join(sorted(base_emails | {expected_email}))
+        )
+    return cv_strategy_paths()
+
+
+def write_snapshot_manifest(snapshot: Path, records: list[dict[str, str]]) -> None:
+    files = []
+    for record in records:
+        relative = record["path"]
+        files.append({**record, "sha256": sha256_file(snapshot / relative)})
+    write_json(snapshot / "manifest.json", {"schema_version": SNAPSHOT_MANIFEST_VERSION, "files": files})
+
+
+def validate_snapshot_manifest(batch: Path) -> dict:
+    snapshot = batch / "snapshot"
+    manifest = read_json(snapshot / "manifest.json")
+    records = manifest.get("files")
+    if manifest.get("schema_version") != SNAPSHOT_MANIFEST_VERSION or not isinstance(records, list):
+        raise JobSeekError("batch snapshot manifest is invalid")
+    allowed_roles = {
+        "candidate_fact_source",
+        "candidate_fact_and_cv_template",
+        "approved_content_bank",
+        "cv_guidance_only",
+        "assessment_configuration",
+        "discovery_history",
+    }
+    seen: set[str] = set()
+    role_by_path: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {"path", "role", "sha256", "source"}:
+            raise JobSeekError("batch snapshot manifest record is invalid")
+        relative = record["path"]
+        role = record["role"]
+        if not isinstance(relative, str) or not isinstance(role, str) or role not in allowed_roles:
+            raise JobSeekError("batch snapshot manifest path or role is invalid")
+        candidate = Path(relative)
+        if candidate.is_absolute() or ".." in candidate.parts or relative in seen:
+            raise JobSeekError("batch snapshot manifest contains an unsafe or duplicate path")
+        path = snapshot / candidate
+        if not path.is_file() or path.is_symlink() or sha256_file(path) != record["sha256"]:
+            raise JobSeekError(f"batch snapshot file is missing or changed: {relative}")
+        if not isinstance(record["source"], str) or not record["source"]:
+            raise JobSeekError("batch snapshot provenance is invalid")
+        seen.add(relative)
+        role_by_path[relative] = role
+    actual = {
+        path.relative_to(snapshot).as_posix()
+        for path in snapshot.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    if seen != actual:
+        raise JobSeekError("batch snapshot manifest does not exactly cover the frozen files")
+    required_roles = {
+        "candidate-profile.md": "candidate_fact_source",
+        "base-cv.docx": "candidate_fact_and_cv_template",
+        "track-profile.md": "candidate_fact_source",
+        "answer-overrides.md": "approved_content_bank",
+        "answer-bank.md": "approved_content_bank",
+        "cover-letter-bank.md": "approved_content_bank",
+    }
+    if any(role_by_path.get(path) != role for path, role in required_roles.items()):
+        raise JobSeekError("batch snapshot material roles are incomplete or incorrect")
+    strategy_paths = [path for path in role_by_path if path.startswith("cv-strategies/")]
+    if any(role_by_path[path] != "cv_guidance_only" for path in strategy_paths):
+        raise JobSeekError("batch CV strategy provenance role is invalid")
+    profile_text = (snapshot / "candidate-profile.md").read_text(encoding="utf-8")
+    expected_email = preferred_application_email(profile_text)
+    other_authoritative_markdown = [
+        "track-profile.md",
+        "answer-overrides.md",
+        "answer-bank.md",
+        "cover-letter-bank.md",
+    ]
+    for relative in other_authoritative_markdown:
+        text = (snapshot / relative).read_text(encoding="utf-8")
+        emails = declared_application_emails(text)
+        if any(email != expected_email for email in emails):
+            raise JobSeekError(
+                f"Authoritative application email conflict in frozen snapshot/{relative}: "
+                + ", ".join(sorted(emails | {expected_email}))
+            )
+    base_emails = docx_emails(snapshot / "base-cv.docx")
+    if expected_email not in base_emails:
+        raise JobSeekError("Authoritative application email conflict in frozen base CV")
+    return manifest
 
 
 def attachment_kind(path: Path) -> str | None:
@@ -393,9 +546,6 @@ def assessment_policy(config: dict, track: str) -> dict:
     track_config = tracks[track]
     if not isinstance(track_config, dict) or not isinstance(track_config.get("directory"), str):
         raise JobSeekError(f"Invalid track configuration: {track}")
-    threshold = config.get("eligible_threshold")
-    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 <= threshold <= 100:
-        raise JobSeekError("eligible_threshold must be a number from 0 to 100")
     exclusions = config.get("hard_exclusions")
     if not isinstance(exclusions, dict) or not exclusions:
         raise JobSeekError("hard_exclusions must be a non-empty object")
@@ -411,14 +561,13 @@ def assessment_policy(config: dict, track: str) -> dict:
         raise JobSeekError("track scope_exclusions must be an array")
     return {
         "track": track,
-        "eligible_threshold": threshold,
         "hard_exclusions": exclusions,
         "score_components": components,
         "track_scope_exclusions": scope,
     }
 
 
-def assessment_validation_error(assessment: object, policy: dict) -> str | None:
+def assessment_validation_error(assessment: object) -> str | None:
     if not isinstance(assessment, dict):
         return "assessment must be an object"
     classification = assessment.get("classification")
@@ -431,34 +580,15 @@ def assessment_validation_error(assessment: object, policy: dict) -> str | None:
         parse_aware_timestamp(assessment.get("assessed_at"))
     except JobSeekError as exc:
         return f"assessment assessed_at is invalid: {exc}"
-    if assessment.get("eligible_threshold") != policy.get("eligible_threshold"):
-        return "assessment eligible_threshold does not match the batch policy"
+    score = assessment.get("score_total")
+    if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= 100):
+        return "assessment score_total must be a number from 0 to 100 when provided"
     if classification == "Eligible":
-        score = assessment.get("score_total")
-        if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= 100:
-            return "Eligible assessment score_total must be a number from 0 to 100"
-        if score < policy["eligible_threshold"]:
-            return "Eligible assessment score_total is below eligible_threshold"
         if assessment["unresolved_items"]:
             return "Eligible assessment cannot contain unresolved_items"
+        if assessment["hard_exclusions"]:
+            return "Eligible assessment cannot contain hard_exclusions"
     return None
-
-
-def validate_batch_policy(policy: dict, track: object) -> dict:
-    required = {"track", "eligible_threshold", "hard_exclusions", "score_components", "track_scope_exclusions"}
-    threshold = policy.get("eligible_threshold")
-    if (
-        set(policy) != required
-        or policy.get("track") != track
-        or isinstance(threshold, bool)
-        or not isinstance(threshold, (int, float))
-        or not 0 <= threshold <= 100
-        or not isinstance(policy.get("hard_exclusions"), dict)
-        or not isinstance(policy.get("score_components"), dict)
-        or not isinstance(policy.get("track_scope_exclusions"), list)
-    ):
-        raise JobSeekError("batch assessment policy is invalid")
-    return policy
 
 
 def command_preflight(args: argparse.Namespace) -> None:
@@ -489,20 +619,9 @@ def command_preflight(args: argparse.Namespace) -> None:
     if missing:
         raise JobSeekError("Missing required inputs: " + ", ".join(missing))
     for path in required[:7]:
-        if path.suffix.lower() == ".md":
-            text = path.read_text(encoding="utf-8")
-            if not text.strip() or re.search(
-                r"\b(?:TODO|TBD|PLACEHOLDER)\b|\{\{[^}]+\}\}|<placeholder(?:\s[^>]*)?>",
-                text,
-                re.IGNORECASE,
-            ):
-                raise JobSeekError(f"Empty or placeholder content in {path.relative_to(ROOT)}")
-    try:
-        with zipfile.ZipFile(ROOT / "profile/cv/base.docx") as archive:
-            if "word/document.xml" not in archive.namelist():
-                raise JobSeekError("base.docx is not a readable Word document")
-    except (OSError, zipfile.BadZipFile) as exc:
-        raise JobSeekError(f"base.docx is not readable: {exc}") from exc
+        if path.suffix.lower() == ".md" and not path.read_text(encoding="utf-8").strip():
+            raise JobSeekError(f"Empty required input: {path.relative_to(ROOT)}")
+    validate_live_material_inputs(track_dir)
     history_rows = read_jsonl(ROOT / config["history"]["reviewed_jobs"])
     application_rows = read_jsonl(ROOT / config["archive"]["applications_index"])
     identities: dict[str, dict] = {}
@@ -579,20 +698,33 @@ def command_new_batch(args: argparse.Namespace) -> None:
     discovery.mkdir()
     jobs.mkdir()
     track_dir = ROOT / config["tracks"][args.track]["directory"]
-    copies = {
-        ROOT / "profile/candidate-profile.md": snapshot / "candidate-profile.md",
-        track_dir / "profile.md": snapshot / "track-profile.md",
-        track_dir / "search-criteria.md": snapshot / "search-criteria.md",
-        track_dir / "answer-overrides.md": snapshot / "answer-overrides.md",
-        ROOT / "profile/banks/application-answers.md": snapshot / "answer-bank.md",
-        ROOT / "profile/banks/cover-letter-content.md": snapshot / "cover-letter-bank.md",
-        ROOT / "profile/cv/base.docx": snapshot / "base-cv.docx",
-        ROOT / config["history"]["reviewed_jobs"]: snapshot / "reviewed-jobs.jsonl",
-        ROOT / config["history"]["reviewed_url_index"]: snapshot / "reviewed-url-index.json",
-    }
-    for source, destination in copies.items():
+    copies = [
+        (ROOT / "profile/candidate-profile.md", "candidate-profile.md", "candidate_fact_source"),
+        (track_dir / "profile.md", "track-profile.md", "candidate_fact_source"),
+        (track_dir / "search-criteria.md", "search-criteria.md", "assessment_configuration"),
+        (track_dir / "answer-overrides.md", "answer-overrides.md", "approved_content_bank"),
+        (ROOT / "profile/banks/application-answers.md", "answer-bank.md", "approved_content_bank"),
+        (ROOT / "profile/banks/cover-letter-content.md", "cover-letter-bank.md", "approved_content_bank"),
+        (ROOT / "profile/cv/base.docx", "base-cv.docx", "candidate_fact_and_cv_template"),
+        (ROOT / config["history"]["reviewed_jobs"], "reviewed-jobs.jsonl", "discovery_history"),
+        (ROOT / config["history"]["reviewed_url_index"], "reviewed-url-index.json", "discovery_history"),
+    ]
+    for strategy in cv_strategy_paths():
+        copies.append((strategy, f"cv-strategies/{strategy.name}", "cv_guidance_only"))
+    records: list[dict[str, str]] = []
+    for source, relative, role in copies:
+        destination = snapshot / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
+        records.append({"path": relative, "role": role, "source": source.relative_to(ROOT).as_posix()})
     write_json(snapshot / "assessment-policy.json", policy)
+    records.append({
+        "path": "assessment-policy.json",
+        "role": "assessment_configuration",
+        "source": "config/workspace.json#assessment-policy",
+    })
+    write_snapshot_manifest(snapshot, records)
+    validate_snapshot_manifest(batch)
     write_json(batch / "batch.json", {
         "batch_id": batch_id,
         "completed_at": None,
@@ -603,6 +735,52 @@ def command_new_batch(args: argparse.Namespace) -> None:
     if active_batch_ids() != [batch_id]:
         raise JobSeekError("New batch did not become the unique active batch")
     print(batch_id)
+
+
+def command_materials_inputs(args: argparse.Namespace) -> None:
+    job_dir = resolve_job(args.batch, args.job)
+    batch = job_dir.parents[1]
+    require_active_batch(batch)
+    manifest = validate_snapshot_manifest(batch)
+    assessment = read_json(job_dir / "assessment.json")
+    outcome = assessment.get("classification")
+    unresolved = assessment.get("unresolved_items") or []
+    audit_path = job_dir / "audit.json"
+    if audit_path.is_file():
+        audit = read_json(audit_path)
+        outcome = audit.get("outcome", outcome)
+        unresolved = audit.get("remaining_items") or []
+    if outcome != "Eligible" or unresolved:
+        raise JobSeekError("Materials require an Eligible conclusion with no unresolved items")
+    advertisement = job_dir / "advertisement.md"
+    if not advertisement.is_file() or advertisement.is_symlink() or not advertisement.read_text(encoding="utf-8").strip():
+        raise JobSeekError("Materials require a complete advertisement.md")
+    records = manifest["files"]
+    batch_prefix = batch.relative_to(ROOT).as_posix()
+
+    def workspace_path(relative: str) -> str:
+        return f"{batch_prefix}/snapshot/{relative}"
+
+    fact_roles = {"candidate_fact_source", "candidate_fact_and_cv_template", "approved_content_bank"}
+    fact_sources = [workspace_path(record["path"]) for record in records if record["role"] in fact_roles]
+    guidance = [workspace_path(record["path"]) for record in records if record["role"] == "cv_guidance_only"]
+    job_inputs = [
+        (job_dir / "job.json").relative_to(ROOT).as_posix(),
+        advertisement.relative_to(ROOT).as_posix(),
+        (job_dir / "assessment.json").relative_to(ROOT).as_posix(),
+    ]
+    if audit_path.is_file():
+        job_inputs.append(audit_path.relative_to(ROOT).as_posix())
+    print(json.dumps({
+        "batch_id": args.batch,
+        "job_id": args.job,
+        "base_cv_template": workspace_path("base-cv.docx"),
+        "fact_sources": fact_sources,
+        "guidance_only": guidance,
+        "job_inputs": job_inputs,
+        "materials_output_directory": (job_dir / "materials").relative_to(ROOT).as_posix(),
+        "snapshot_manifest_sha256": sha256_file(batch / "snapshot/manifest.json"),
+    }, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def rebuild_index() -> dict[str, str]:
@@ -642,14 +820,14 @@ def history_outcome(classification: str) -> str:
     return mapping.get(classification.strip().lower(), "needs_review")
 
 
-def discovery_priority(row: dict, policy: dict) -> int:
+def discovery_priority(row: dict) -> int:
     advertisement = row.get("advertisement_markdown")
     assessment = row.get("assessment")
     fully_assessed = (
         row.get("fully_assessed") is True
         and isinstance(advertisement, str)
         and bool(advertisement.strip())
-        and assessment_validation_error(assessment, policy) is None
+        and assessment_validation_error(assessment) is None
     )
     if fully_assessed:
         return 0
@@ -667,8 +845,6 @@ def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
     config = config or workspace_config()
     limits = stop_conditions(config)
     batch_metadata = validate_batch_metadata(batch)
-    track = batch_metadata.get("track")
-    policy = validate_batch_policy(read_json(batch / "snapshot/assessment-policy.json"), track)
     fully_assessed = confirmed = failures = takeovers = 0
     jobs_dir = batch / "jobs"
     for job_dir in sorted(jobs_dir.iterdir() if jobs_dir.is_dir() else []):
@@ -678,7 +854,7 @@ def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
             job = read_json(job_dir / "job.json")
             assessment = read_json(job_dir / "assessment.json")
             advertisement = (job_dir / "advertisement.md").read_text(encoding="utf-8")
-            if job.get("fully_assessed") is True and advertisement.strip() and assessment_validation_error(assessment, policy) is None:
+            if job.get("fully_assessed") is True and advertisement.strip() and assessment_validation_error(assessment) is None:
                 fully_assessed += 1
         except (JobSeekError, OSError):
             pass
@@ -709,7 +885,6 @@ def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
         "manual_takeovers": takeovers,
         "remaining_assessment_capacity": max(0, limits["max_fully_assessed_ads"] - fully_assessed),
         "discovery_should_stop": bool(reasons),
-        "batch_should_stop": bool(reasons),
         "stop_reasons": reasons,
     }
 
@@ -717,11 +892,11 @@ def batch_stop_status(batch: Path, config: dict | None = None) -> dict:
 def command_merge_discovery(args: argparse.Namespace) -> None:
     batch = resolve_batch(args.batch)
     batch_meta = require_active_batch(batch)
+    validate_snapshot_manifest(batch)
     track = batch_meta.get("track")
     config = workspace_config()
     if track not in config.get("tracks", {}):
         raise JobSeekError("batch.json contains an unknown track")
-    policy = validate_batch_policy(read_json(batch / "snapshot/assessment-policy.json"), track)
     snapshot_index = read_json(batch / "snapshot/reviewed-url-index.json")
     if any(not isinstance(key, str) or not isinstance(value, str) for key, value in snapshot_index.items()):
         raise JobSeekError("batch reviewed URL snapshot is invalid")
@@ -733,7 +908,7 @@ def command_merge_discovery(args: argparse.Namespace) -> None:
                 continue
             canonical = canonicalize_url(url)
             candidates.append((output.name, number, row, canonical))
-    candidates.sort(key=lambda item: (str(item[3]["identity_key"]), discovery_priority(item[2], policy), item[0], item[1]))
+    candidates.sort(key=lambda item: (str(item[3]["identity_key"]), discovery_priority(item[2]), item[0], item[1]))
     selected: dict[str, tuple[str, int, dict, dict]] = {}
     duplicates = []
     historical_duplicates = []
@@ -746,7 +921,7 @@ def command_merge_discovery(args: argparse.Namespace) -> None:
         if item[2].get("fully_assessed") is True:
             advertisement = item[2].get("advertisement_markdown")
             error = None if isinstance(advertisement, str) and advertisement.strip() else "advertisement_markdown must be non-empty"
-            error = error or assessment_validation_error(item[2].get("assessment"), policy)
+            error = error or assessment_validation_error(item[2].get("assessment"))
             if error:
                 validation_errors.append({"identity_key": key, "source_file": item[0], "line": item[1], "error": error})
         if key in selected:
@@ -763,13 +938,9 @@ def command_merge_discovery(args: argparse.Namespace) -> None:
     history_path = ROOT / config["history"]["reviewed_jobs"]
     history = read_jsonl(history_path)
     history_by_key = {str(canonicalize_url(row["canonical_url"])["identity_key"]): row for row in history}
-    stop_status = batch_stop_status(batch, config)
-    remaining = stop_status["remaining_assessment_capacity"]
-    stop_reason = stop_status["stop_reasons"][0] if stop_status["stop_reasons"] else None
-    not_merged = []
     added = 0
-    for key, (filename, _number, row, canonical) in sorted(selected.items()):
-        if discovery_priority(row, policy) != 0:
+    for key, (_filename, _number, row, canonical) in sorted(selected.items()):
+        if discovery_priority(row) != 0:
             continue
         job_id = str(canonical["job_id"])
         job_dir = batch / "jobs" / job_id
@@ -780,19 +951,11 @@ def command_merge_discovery(args: argparse.Namespace) -> None:
             if (
                 existing_job.get("fully_assessed") is True
                 and existing_advertisement.strip()
-                and assessment_validation_error(existing_assessment, policy) is None
+                and assessment_validation_error(existing_assessment) is None
             ):
                 continue
         except (JobSeekError, OSError):
             pass
-        if stop_reason or remaining <= 0:
-            not_merged.append({
-                "identity_key": key,
-                "source_file": filename,
-                "reason": stop_reason or "max_fully_assessed_ads_reached",
-            })
-            continue
-        remaining -= 1
         job_dir.mkdir(parents=True, exist_ok=True)
         advertisement = row["advertisement_markdown"]
         atomic_write(job_dir / "advertisement.md", advertisement.rstrip() + "\n")
@@ -841,7 +1004,6 @@ def command_merge_discovery(args: argparse.Namespace) -> None:
         "fully_assessed_jobs_added": added,
         "cross_worker_duplicates": duplicates,
         "historical_duplicates": historical_duplicates,
-        "not_merged_due_to_stop_limit": not_merged,
         "validation_errors": validation_errors,
     })
     print(f"merged {len(selected)} identities; added {added} reviewed jobs; {len(duplicates)} cross-worker duplicates")
@@ -945,7 +1107,6 @@ def command_status(args: argparse.Namespace) -> None:
 def command_complete_batch(args: argparse.Namespace) -> None:
     batch = resolve_batch(args.batch)
     metadata = require_active_batch(batch)
-    command_preflight(argparse.Namespace(track=metadata["track"]))
     metadata["status"] = "completed"
     metadata["completed_at"] = now_in_workspace_timezone(workspace_config()).isoformat()
     write_json(batch / "batch.json", metadata)
@@ -1117,6 +1278,10 @@ def parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status")
     status.add_argument("--batch", required=True)
     status.set_defaults(func=command_status)
+    materials_inputs = sub.add_parser("materials-inputs")
+    materials_inputs.add_argument("--batch", required=True)
+    materials_inputs.add_argument("--job", required=True)
+    materials_inputs.set_defaults(func=command_materials_inputs)
     complete_batch = sub.add_parser("complete-batch")
     complete_batch.add_argument("--batch", required=True)
     complete_batch.set_defaults(func=command_complete_batch)

@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -21,18 +22,27 @@ class JobSeekTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.original_root = jobseek.ROOT
         jobseek.ROOT = self.root
-        for directory in ("config", "history", "archive/applications", "batches", "profile/cv", "profile/banks"):
+        for directory in ("config", "history", "archive/applications", "batches", "profile/cv/strategies", "profile/banks"):
             (self.root / directory).mkdir(parents=True, exist_ok=True)
         for track in ("it", "part-time"):
             directory = self.root / "tracks" / track
             directory.mkdir(parents=True)
             for name in ("profile.md", "search-criteria.md", "answer-overrides.md"):
                 jobseek.atomic_write(directory / name, f"# {track} {name}\n")
-        jobseek.atomic_write(self.root / "profile/candidate-profile.md", "# Candidate\n")
-        jobseek.atomic_write(self.root / "profile/banks/application-answers.md", "# Answers\n")
+        jobseek.atomic_write(
+            self.root / "profile/candidate-profile.md",
+            "# Candidate\n\n- Preferred application email: candidate@example.com\n",
+        )
+        jobseek.atomic_write(
+            self.root / "profile/banks/application-answers.md",
+            "# Answers\n\nReferences available upon request. Never invent referee contact details.\n",
+        )
         jobseek.atomic_write(self.root / "profile/banks/cover-letter-content.md", "# Cover letters\n")
-        with zipfile.ZipFile(self.root / "profile/cv/base.docx", "w") as archive:
-            archive.writestr("word/document.xml", "<document/>")
+        self.write_base_cv()
+        jobseek.atomic_write(
+            self.root / "profile/cv/strategies/general.md",
+            "# General CV strategy\n\nGuidance only - not a candidate fact source.\n",
+        )
         self.write_config()
         jobseek.write_jsonl(self.root / "history/reviewed-jobs.jsonl", [])
         jobseek.write_json(self.root / "history/reviewed-url-index.json", {})
@@ -44,7 +54,6 @@ class JobSeekTest(unittest.TestCase):
 
     def write_config(self, score_components=None):
         jobseek.write_json(self.root / "config/workspace.json", {
-            "eligible_threshold": 70,
             "hard_exclusions": {"work_authorisation": "Required work rights are unsupported."},
             "score_components": score_components or {"fit": 70, "logistics": 30},
             "timezone": "Australia/Perth",
@@ -62,6 +71,13 @@ class JobSeekTest(unittest.TestCase):
             "archive": {"applications_index": "archive/applications.jsonl", "applications_directory": "archive/applications"},
         })
 
+    def write_base_cv(self, email="candidate@example.com"):
+        with zipfile.ZipFile(self.root / "profile/cv/base.docx", "w") as archive:
+            archive.writestr(
+                "word/document.xml",
+                f"<document>Email: {email} References: Available upon request.</document>",
+            )
+
     def make_batch(self):
         batch = self.root / "batches/2026-08-03__it__001"
         (batch / "discovery").mkdir(parents=True, exist_ok=True)
@@ -74,9 +90,48 @@ class JobSeekTest(unittest.TestCase):
             "status": "active",
             "track": "it",
         })
-        jobseek.write_json(batch / "snapshot/reviewed-url-index.json", {})
-        jobseek.write_json(batch / "snapshot/assessment-policy.json", jobseek.assessment_policy(jobseek.workspace_config(), "it"))
+        snapshot = batch / "snapshot"
+        shutil.copy2(self.root / "profile/cv/base.docx", snapshot / "base-cv.docx")
+        text_inputs = [
+            (self.root / "profile/candidate-profile.md", "candidate-profile.md", "candidate_fact_source"),
+            (self.root / "tracks/it/profile.md", "track-profile.md", "candidate_fact_source"),
+            (self.root / "tracks/it/search-criteria.md", "search-criteria.md", "assessment_configuration"),
+            (self.root / "tracks/it/answer-overrides.md", "answer-overrides.md", "approved_content_bank"),
+            (self.root / "profile/banks/application-answers.md", "answer-bank.md", "approved_content_bank"),
+            (self.root / "profile/banks/cover-letter-content.md", "cover-letter-bank.md", "approved_content_bank"),
+        ]
+        records = [{
+            "path": "base-cv.docx",
+            "role": "candidate_fact_and_cv_template",
+            "source": "profile/cv/base.docx",
+        }]
+        for source, relative, role in text_inputs:
+            shutil.copy2(source, snapshot / relative)
+            records.append({"path": relative, "role": role, "source": source.relative_to(self.root).as_posix()})
+        shutil.copy2(self.root / "history/reviewed-jobs.jsonl", snapshot / "reviewed-jobs.jsonl")
+        shutil.copy2(self.root / "history/reviewed-url-index.json", snapshot / "reviewed-url-index.json")
+        records.extend([
+            {"path": "reviewed-jobs.jsonl", "role": "discovery_history", "source": "history/reviewed-jobs.jsonl"},
+            {"path": "reviewed-url-index.json", "role": "discovery_history", "source": "history/reviewed-url-index.json"},
+        ])
+        jobseek.write_json(snapshot / "assessment-policy.json", jobseek.assessment_policy(jobseek.workspace_config(), "it"))
+        records.append({
+            "path": "assessment-policy.json",
+            "role": "assessment_configuration",
+            "source": "config/workspace.json#assessment-policy",
+        })
+        jobseek.write_snapshot_manifest(snapshot, records)
         return batch
+
+    def refresh_snapshot_hash(self, batch, relative):
+        manifest = jobseek.read_json(batch / "snapshot/manifest.json")
+        for record in manifest["files"]:
+            if record["path"] == relative:
+                record["sha256"] = jobseek.sha256_file(batch / "snapshot" / relative)
+                break
+        else:
+            self.fail(f"missing manifest record: {relative}")
+        jobseek.write_json(batch / "snapshot/manifest.json", manifest)
 
     def assessed(self, url="https://seek.com.au/job/99", company="Example"):
         return {
@@ -87,7 +142,7 @@ class JobSeekTest(unittest.TestCase):
             "advertisement_markdown": "# Support Officer\n\nComplete advertisement.",
             "assessment": {
                 "classification": "Eligible", "reasons": [], "unresolved_items": [], "hard_exclusions": [],
-                "assessed_at": "2026-08-03T00:00:00Z", "eligible_threshold": 70, "score_total": 80,
+                "assessed_at": "2026-08-03T00:00:00Z", "score_total": 80,
             },
         }
 
@@ -387,14 +442,160 @@ class JobSeekTest(unittest.TestCase):
         batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
         policy_path = batch / "snapshot/assessment-policy.json"
         policy = jobseek.read_json(policy_path)
-        self.assertEqual(policy["eligible_threshold"], 70)
+        self.assertEqual(policy["score_components"], {"fit": 70, "logistics": 30})
         self.assertEqual(jobseek.read_jsonl(batch / "snapshot/reviewed-jobs.jsonl"), [reviewed])
         jobseek.write_jsonl(self.root / "history/reviewed-jobs.jsonl", [])
         self.assertEqual(jobseek.read_jsonl(batch / "snapshot/reviewed-jobs.jsonl"), [reviewed])
         config = jobseek.read_json(self.root / "config/workspace.json")
-        config["eligible_threshold"] = 80
+        config["score_components"] = {"future_ranking": 100}
         jobseek.write_json(self.root / "config/workspace.json", config)
-        self.assertEqual(jobseek.read_json(policy_path)["eligible_threshold"], 70)
+        self.assertEqual(jobseek.read_json(policy_path)["score_components"], {"fit": 70, "logistics": 30})
+
+    def test_new_batch_freezes_complete_material_inputs_with_roles_and_hashes(self):
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        manifest = jobseek.validate_snapshot_manifest(batch)
+        roles = {record["path"]: record["role"] for record in manifest["files"]}
+        self.assertEqual(roles["base-cv.docx"], "candidate_fact_and_cv_template")
+        self.assertEqual(roles["candidate-profile.md"], "candidate_fact_source")
+        self.assertEqual(roles["track-profile.md"], "candidate_fact_source")
+        self.assertEqual(roles["answer-bank.md"], "approved_content_bank")
+        self.assertEqual(roles["cover-letter-bank.md"], "approved_content_bank")
+        self.assertEqual(roles["cv-strategies/general.md"], "cv_guidance_only")
+        frozen = (batch / "snapshot/candidate-profile.md").read_text(encoding="utf-8")
+        jobseek.atomic_write(
+            self.root / "profile/candidate-profile.md",
+            "# Candidate\n\n- Preferred application email: future@example.com\n",
+        )
+        self.assertEqual((batch / "snapshot/candidate-profile.md").read_text(encoding="utf-8"), frozen)
+        jobseek.validate_snapshot_manifest(batch)
+
+    def test_materials_inputs_exposes_only_frozen_snapshot_and_job_paths(self):
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        job_dir = batch / "jobs/seek-77"
+        job_dir.mkdir()
+        jobseek.atomic_write(job_dir / "advertisement.md", "# Complete advertisement\n")
+        jobseek.write_json(job_dir / "job.json", {"job_id": "seek-77", "track": "it"})
+        jobseek.write_json(job_dir / "assessment.json", {
+            "classification": "Eligible",
+            "reasons": [],
+            "unresolved_items": [],
+        })
+        jobseek.atomic_write(self.root / "profile/banks/application-answers.md", "# LIVE CHANGE\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            jobseek.command_materials_inputs(argparse.Namespace(batch=batch.name, job="seek-77"))
+        result = json.loads(output.getvalue())
+        disclosed = result["fact_sources"] + result["guidance_only"] + result["job_inputs"]
+        self.assertTrue(all(path.startswith(f"batches/{batch.name}/") for path in disclosed))
+        self.assertTrue(all("/profile/" not in path and "/tracks/" not in path for path in disclosed))
+        self.assertEqual(result["base_cv_template"], f"batches/{batch.name}/snapshot/base-cv.docx")
+        self.assertEqual(result["guidance_only"], [f"batches/{batch.name}/snapshot/cv-strategies/general.md"])
+
+    def test_materials_inputs_rejects_changed_snapshot(self):
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        jobseek.atomic_write(batch / "snapshot/candidate-profile.md", "tampered\n")
+        with self.assertRaises(jobseek.JobSeekError):
+            jobseek.validate_snapshot_manifest(batch)
+
+    def test_snapshot_conflict_is_rejected_even_if_manifest_hash_is_rewritten(self):
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        profile_path = batch / "snapshot/candidate-profile.md"
+        jobseek.atomic_write(
+            profile_path,
+            "# Candidate\n\n- Preferred application email: conflict@example.com\n",
+        )
+        manifest = jobseek.read_json(batch / "snapshot/manifest.json")
+        for record in manifest["files"]:
+            if record["path"] == "candidate-profile.md":
+                record["sha256"] = jobseek.sha256_file(profile_path)
+        jobseek.write_json(batch / "snapshot/manifest.json", manifest)
+        with self.assertRaisesRegex(jobseek.JobSeekError, "email conflict"):
+            jobseek.validate_snapshot_manifest(batch)
+
+    def test_preflight_accepts_canonical_profile_email_in_base_cv(self):
+        jobseek.atomic_write(
+            self.root / "profile/candidate-profile.md",
+            "# Candidate\n\n- Preferred application email: hulinyi928@gmail.com\n",
+        )
+        self.write_base_cv("hulinyi928@gmail.com")
+        jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_preflight_rejects_base_cv_without_canonical_email(self):
+        self.write_base_cv("other@example.com")
+        with self.assertRaisesRegex(jobseek.JobSeekError, "email conflict"):
+            jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_preflight_allows_third_party_emails_in_banks(self):
+        jobseek.atomic_write(
+            self.root / "profile/banks/cover-letter-content.md",
+            "# Contact context\n\nRecruiter: recruiter@example.com\n",
+        )
+        jobseek.atomic_write(
+            self.root / "profile/banks/application-answers.md",
+            "# Referee context\n\nA user-approved referee may later use referee@example.org.\n",
+        )
+        jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_preflight_rejects_explicit_conflicting_application_email_declaration(self):
+        jobseek.atomic_write(
+            self.root / "tracks/it/answer-overrides.md",
+            "# Overrides\n\nApplication email: conflict@example.com\n",
+        )
+        with self.assertRaisesRegex(jobseek.JobSeekError, "email conflict"):
+            jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_base_cv_may_contain_other_email_when_canonical_is_present(self):
+        with zipfile.ZipFile(self.root / "profile/cv/base.docx", "w") as archive:
+            archive.writestr(
+                "word/document.xml",
+                "<document>candidate@example.com recruiter@example.com</document>",
+            )
+        jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_snapshot_allows_third_party_emails_but_rejects_candidate_declaration_conflict(self):
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        bank = batch / "snapshot/answer-bank.md"
+        jobseek.atomic_write(bank, "# Referee\n\nContact referee@example.org only after approval.\n")
+        self.refresh_snapshot_hash(batch, "answer-bank.md")
+        jobseek.validate_snapshot_manifest(batch)
+        jobseek.atomic_write(bank, "# Candidate contact\n\nApplication email: conflict@example.com\n")
+        self.refresh_snapshot_hash(batch, "answer-bank.md")
+        with self.assertRaisesRegex(jobseek.JobSeekError, "email conflict"):
+            jobseek.validate_snapshot_manifest(batch)
+
+    def test_preflight_does_not_parse_reference_wording(self):
+        jobseek.atomic_write(self.root / "profile/banks/application-answers.md", "# Referee policy in natural language\n")
+        self.write_base_cv()
+        jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_preflight_ignores_legacy_master_cv(self):
+        masters = self.root / "profile/cv/masters"
+        masters.mkdir()
+        with zipfile.ZipFile(masters / "legacy.docx", "w") as archive:
+            archive.writestr("word/document.xml", "<document/>")
+        jobseek.command_preflight(argparse.Namespace(track="it"))
+
+    def test_strategy_is_optional(self):
+        (self.root / "profile/cv/strategies/general.md").unlink()
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        manifest = jobseek.validate_snapshot_manifest(batch)
+        self.assertFalse(any(record["role"] == "cv_guidance_only" for record in manifest["files"]))
+
+    def test_strategy_wording_is_not_parsed(self):
+        jobseek.atomic_write(
+            self.root / "profile/cv/strategies/general.md",
+            "Put the most relevant evidence first and keep the wording concise.\n",
+        )
+        jobseek.command_new_batch(argparse.Namespace(track="it"))
+        batch = next(path for path in (self.root / "batches").iterdir() if path.is_dir())
+        manifest = jobseek.validate_snapshot_manifest(batch)
+        self.assertTrue(any(record["role"] == "cv_guidance_only" for record in manifest["files"]))
 
     def test_new_batch_requires_no_active_batch(self):
         first = self.make_batch()
@@ -416,6 +617,14 @@ class JobSeekTest(unittest.TestCase):
         self.assertIn("batch_completed", jobseek.batch_stop_status(batch)["stop_reasons"])
         with self.assertRaises(jobseek.JobSeekError):
             jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+
+    def test_complete_batch_uses_frozen_batch_not_live_preflight(self):
+        batch = self.make_batch()
+        jobseek.atomic_write(self.root / "profile/candidate-profile.md", "changed after batch creation\n")
+        (self.root / "profile/cv/base.docx").unlink()
+        with mock.patch.object(jobseek, "command_preflight", side_effect=AssertionError("live preflight called")):
+            jobseek.command_complete_batch(argparse.Namespace(batch=batch.name))
+        self.assertEqual(jobseek.validate_batch_metadata(batch)["status"], "completed")
 
     def test_discovery_results_include_all_eligible_and_needs_review_jobs(self):
         batch = self.make_batch()
@@ -460,9 +669,29 @@ class JobSeekTest(unittest.TestCase):
         self.assertTrue(status["discovery_should_stop"])
         self.assertIn("max_fully_assessed_ads_reached", status["stop_reasons"])
 
+    def test_final_audit_outcomes_are_assessed(self):
+        batch = self.make_batch()
+        for number, outcome in enumerate(("Skipped", "Blocked", "Expired", "Withdrawn"), 1):
+            job_dir = self.add_assessed_job(batch, number)
+            jobseek.write_json(job_dir / "audit.json", {
+                "outcome": outcome,
+                "remaining_items": [],
+            })
+            self.assertEqual(jobseek.derive_job_status(job_dir), "assessed")
+
+    def test_unresolved_audit_outcome_is_waiting(self):
+        batch = self.make_batch()
+        job_dir = self.add_assessed_job(batch, 1)
+        jobseek.write_json(job_dir / "audit.json", {
+            "outcome": "Needs Review",
+            "remaining_items": ["Candidate fact remains unresolved."],
+        })
+        self.assertEqual(jobseek.derive_job_status(job_dir), "waiting audit")
+
     def test_observed_and_historical_duplicates_do_not_use_capacity(self):
         batch = self.make_batch()
         jobseek.write_json(batch / "snapshot/reviewed-url-index.json", {"seek:99": "seek-99"})
+        self.refresh_snapshot_hash(batch, "reviewed-url-index.json")
         jobseek.write_jsonl(batch / "discovery/a.jsonl", [
             {"url": "https://seek.com.au/job/98", "observed": True}, self.assessed(),
         ])
@@ -495,22 +724,24 @@ class JobSeekTest(unittest.TestCase):
         self.assertEqual(status["manual_takeovers"], 2)
         self.assertIn("max_manual_takeovers_reached", status["stop_reasons"])
 
-    def test_merge_caps_fully_assessed_jobs_at_twenty(self):
+    def test_merge_allows_small_overshoot_beyond_assessment_target(self):
         batch = self.make_batch()
-        rows = [self.assessed(f"https://seek.com.au/job/{number}") for number in range(1, 22)]
+        rows = [self.assessed(f"https://seek.com.au/job/{number}") for number in range(1, 23)]
         jobseek.write_jsonl(batch / "discovery/a.jsonl", rows)
         jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
-        self.assertEqual(len(list((batch / "jobs").iterdir())), 20)
+        self.assertEqual(len(list((batch / "jobs").iterdir())), 22)
         report = jobseek.read_json(batch / "merge-report.json")
-        self.assertEqual(len(report["not_merged_due_to_stop_limit"]), 1)
+        self.assertNotIn("not_merged_due_to_stop_limit", report)
+        self.assertTrue(jobseek.batch_stop_status(batch)["discovery_should_stop"])
 
-    def test_other_stop_threshold_prevents_merge(self):
+    def test_submission_stop_threshold_does_not_block_existing_output_merge(self):
         batch = self.make_batch()
         for number in range(5):
             self.add_confirmation(batch, number, "confirmed")
         jobseek.write_jsonl(batch / "discovery/a.jsonl", [self.assessed("https://seek.com.au/job/99")])
         jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
-        self.assertFalse((batch / "jobs/seek-99").exists())
+        self.assertTrue((batch / "jobs/seek-99").exists())
+        self.assertTrue(jobseek.batch_stop_status(batch)["discovery_should_stop"])
 
     def test_snapshot_historical_duplicate_is_never_merged_or_updated(self):
         history = [{
@@ -520,7 +751,6 @@ class JobSeekTest(unittest.TestCase):
         jobseek.write_jsonl(self.root / "history/reviewed-jobs.jsonl", history)
         jobseek.rebuild_index()
         batch = self.make_batch()
-        jobseek.write_json(batch / "snapshot/reviewed-url-index.json", {"seek:99": "seek-99"})
         jobseek.write_jsonl(batch / "discovery/a.jsonl", [self.assessed()])
         jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
         self.assertFalse((batch / "jobs/seek-99").exists())
@@ -542,6 +772,32 @@ class JobSeekTest(unittest.TestCase):
                     path.unlink()
                 with self.assertRaises(jobseek.JobSeekError):
                     jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+
+    def assert_snapshot_integrity_failure_is_atomic(self, damage):
+        batch = self.make_batch()
+        jobseek.write_jsonl(batch / "discovery/a.jsonl", [self.assessed()])
+        history_before = (self.root / "history/reviewed-jobs.jsonl").read_bytes()
+        damage(batch)
+        with self.assertRaises(jobseek.JobSeekError):
+            jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+        self.assertEqual(list((batch / "jobs").iterdir()), [])
+        self.assertEqual((self.root / "history/reviewed-jobs.jsonl").read_bytes(), history_before)
+        self.assertFalse((batch / "merge-report.json").exists())
+
+    def test_merge_rejects_changed_snapshot_before_mutation(self):
+        self.assert_snapshot_integrity_failure_is_atomic(
+            lambda batch: jobseek.atomic_write(batch / "snapshot/candidate-profile.md", "tampered\n")
+        )
+
+    def test_merge_rejects_missing_snapshot_file_before_mutation(self):
+        self.assert_snapshot_integrity_failure_is_atomic(
+            lambda batch: (batch / "snapshot/candidate-profile.md").unlink()
+        )
+
+    def test_merge_rejects_broken_snapshot_manifest_before_mutation(self):
+        self.assert_snapshot_integrity_failure_is_atomic(
+            lambda batch: jobseek.atomic_write(batch / "snapshot/manifest.json", "not json\n")
+        )
 
     def test_new_batch_uses_perth_date_across_utc_boundary(self):
         perth_time = dt.datetime(2026, 8, 3, 0, 30, tzinfo=jobseek.ZoneInfo("Australia/Perth"))
@@ -595,8 +851,61 @@ class JobSeekTest(unittest.TestCase):
     def test_invalid_assessment_classification_is_rejected(self):
         self.assert_invalid_assessment({"classification": "Maybe"})
 
-    def test_eligible_below_threshold_is_rejected(self):
-        self.assert_invalid_assessment({"score_total": 69})
+    def test_eligible_low_score_is_recorded(self):
+        batch = self.make_batch()
+        row = self.assessed()
+        row["assessment"]["score_total"] = 12
+        jobseek.write_jsonl(batch / "discovery/a.jsonl", [row])
+        jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+        assessment = jobseek.read_json(batch / "jobs/seek-99/assessment.json")
+        self.assertEqual(assessment["classification"], "Eligible")
+        self.assertEqual(assessment["score_total"], 12)
+
+    def test_needs_review_high_score_is_recorded(self):
+        batch = self.make_batch()
+        row = self.assessed()
+        row["assessment"].update({
+            "classification": "Needs Review",
+            "score_total": 99,
+            "unresolved_items": ["Mandatory work-rights wording is unclear"],
+        })
+        jobseek.write_jsonl(batch / "discovery/a.jsonl", [row])
+        jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+        assessment = jobseek.read_json(batch / "jobs/seek-99/assessment.json")
+        self.assertEqual(assessment["classification"], "Needs Review")
+        self.assertEqual(assessment["score_total"], 99)
+
+    def test_hard_excluded_high_score_stays_skipped(self):
+        batch = self.make_batch()
+        row = self.assessed()
+        row["assessment"].update({
+            "classification": "Skipped",
+            "score_total": 100,
+            "hard_exclusions": ["Unsupported mandatory work authorisation"],
+        })
+        jobseek.write_jsonl(batch / "discovery/a.jsonl", [row])
+        jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+        assessment = jobseek.read_json(batch / "jobs/seek-99/assessment.json")
+        self.assertEqual(assessment["classification"], "Skipped")
+
+    def test_hard_exclusion_cannot_be_eligible_even_at_100(self):
+        self.assert_invalid_assessment({
+            "classification": "Eligible",
+            "score_total": 100,
+            "hard_exclusions": ["Unsupported mandatory work authorisation"],
+        })
+
+    def test_assessment_without_score_is_recorded(self):
+        batch = self.make_batch()
+        row = self.assessed()
+        del row["assessment"]["score_total"]
+        jobseek.write_jsonl(batch / "discovery/a.jsonl", [row])
+        jobseek.command_merge_discovery(argparse.Namespace(batch=batch.name))
+        assessment = jobseek.read_json(batch / "jobs/seek-99/assessment.json")
+        self.assertNotIn("score_total", assessment)
+
+    def test_out_of_range_score_is_rejected(self):
+        self.assert_invalid_assessment({"score_total": 101})
 
     def test_eligible_with_unresolved_items_is_rejected(self):
         self.assert_invalid_assessment({"unresolved_items": ["mandatory condition"]})
@@ -604,10 +913,7 @@ class JobSeekTest(unittest.TestCase):
     def test_naive_assessed_at_is_rejected(self):
         self.assert_invalid_assessment({"assessed_at": "2026-08-03T08:00:00"})
 
-    def test_assessment_threshold_mismatch_is_rejected(self):
-        self.assert_invalid_assessment({"eligible_threshold": 80})
-
-    def test_agent_configuration_is_terra_medium_without_overrides(self):
+    def test_agent_configuration_has_expected_static_model_routing(self):
         project = Path(__file__).resolve().parents[1]
         config = (project / ".codex/config.toml").read_text(encoding="utf-8")
         self.assertIn('default_subagent_model = "gpt-5.6-terra"', config)
@@ -615,11 +921,49 @@ class JobSeekTest(unittest.TestCase):
         self.assertIn("max_depth = 1", config)
         expected = {"jobseek_discovery_assess", "jobseek_audit", "jobseek_materials", "jobseek_submission"}
         self.assertEqual(set(__import__("re").findall(r'^\[agents\.([a-z_]+)\]$', config, __import__("re").MULTILINE)), expected)
-        for path in (project / ".codex/agents").glob("*.toml"):
-            text = path.read_text(encoding="utf-8")
+        overrides = {
+            "jobseek-discovery-assess": ("gpt-5.6-luna", "max"),
+            "jobseek-audit": ("gpt-5.6-sol", "medium"),
+            "jobseek-materials": ("gpt-5.6-sol", "medium"),
+        }
+        for name, (model, effort) in overrides.items():
+            text = (project / ".codex/agents" / f"{name}.toml").read_text(encoding="utf-8")
+            self.assertIn(f'model = "{model}"', text)
+            self.assertIn(f'model_reasoning_effort = "{effort}"', text)
             self.assertIn("[agents]\nenabled = false", text)
-            self.assertNotIn("model =", text)
-            self.assertNotIn("reasoning_effort =", text)
+        submission = (project / ".codex/agents/jobseek-submission.toml").read_text(encoding="utf-8")
+        self.assertIn("[agents]\nenabled = false", submission)
+        self.assertNotRegex(submission, r"(?m)^model\s*=")
+        self.assertNotRegex(submission, r"(?m)^model_reasoning_effort\s*=")
+
+    def test_reusable_control_plane_matches_template(self):
+        project = Path(__file__).resolve().parents[1]
+        template = project / "jobseek-template"
+        if not template.is_dir():
+            self.skipTest("standalone template checkout")
+        singleton = {Path(".gitignore"), Path("AGENTS.md"), Path("config/workspace.json")}
+        shared_directories = [Path(".agents"), Path(".codex"), Path("tools"), Path("tests"), Path("profile/cv/strategies")]
+        relative_paths = set(singleton)
+        for directory in shared_directories:
+            relative_paths.update(
+                path.relative_to(project)
+                for path in (project / directory).rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            )
+        template_paths = set(singleton)
+        for directory in shared_directories:
+            template_paths.update(
+                path.relative_to(template)
+                for path in (template / directory).rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            )
+        self.assertEqual(relative_paths, template_paths)
+        for relative in sorted(relative_paths):
+            self.assertEqual(
+                (project / relative).read_bytes(),
+                (template / relative).read_bytes(),
+                f"control-plane drift: {relative}",
+            )
 
 
 if __name__ == "__main__":

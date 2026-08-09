@@ -7,7 +7,7 @@ description: Fill one application, write its exact review, pause for user approv
 
 Read root `AGENTS.md`, the batch snapshot, current job files, and final materials. Do not alter materials or read `private/`. The user manually handles any sensitive upload.
 
-Fill the current application truthfully. Before the final Submit, Apply, or Send action, write `submission/review.json` with `job_id`, `page_url`, non-empty `page_fingerprint`, `answers` object, `declarations` array, non-empty `selected_attachments` array containing a CV, and offset-aware `reviewed_at` in `Australia/Perth`. Attachment paths must be unique, existing relative paths inside the job directory. Stop and return control to the lead.
+Fill the current application truthfully. `References available upon request.` in an approved CV is permitted and is not a policy violation. Do not invent referee names, positions, phone numbers or email addresses; when a form mandates specific unverified referee details, stop for review. Before the final Submit, Apply, or Send action, write `submission/review.json` with `job_id`, `page_url`, non-empty `page_fingerprint`, `answers` object, `declarations` array, non-empty `selected_attachments` array containing a CV, and offset-aware `reviewed_at` in `Australia/Perth`. Attachment paths must be unique, existing relative paths inside the job directory. Stop and return control to the lead.
 
 Immediately before the final click, run `python3 tools/jobseek.py check-approval --batch <batch-id> --job <job-id>`. Continue only when it returns `allowed: true`; any review or attachment change requires a new review and user approval.
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "JobSeek Materials"
-  short_description: "Prepare and verify validated JobSeek application materials."
-  default_prompt: "Use $jobseek-materials to prepare a validated Eligible package."
+  short_description: "Prepare verified materials from frozen batch inputs."
+  default_prompt: "Use $jobseek-materials to prepare a validated Eligible package from the frozen base CV and snapshot inputs."

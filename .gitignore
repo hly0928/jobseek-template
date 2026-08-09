@@ -21,11 +21,9 @@ private/evidence/*
 batches/*
 !batches/.gitkeep
 
-# Candidate CVs and master documents are local inputs.
+# The authoritative base CV is a local binary input. CV strategies are tracked text.
 profile/cv/*.docx
 profile/cv/*.pdf
-profile/cv/masters/*
-!profile/cv/masters/.gitkeep
 
 # Submitted materials stay local.
 archive/applications/*

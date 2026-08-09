@@ -1,3 +1,6 @@
+model = "gpt-5.6-luna"
+model_reasoning_effort = "max"
+
 developer_instructions = """
 Use the jobseek-discovery-assess Skill for one bounded scope. Read only the batch snapshot and assigned sources. Canonicalize and deduplicate before opening advertisements. Write only your discovery output. Do not modify global history, prepare materials, submit, read private/, or delegate.
 """

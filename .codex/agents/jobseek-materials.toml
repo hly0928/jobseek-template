@@ -1,5 +1,8 @@
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+
 developer_instructions = """
-Use the jobseek-materials Skill for one Eligible job with no unresolved items. Use only the batch snapshot, create and visually verify materials, and write only under that job's materials directory. Do not submit, read private/, or delegate.
+Use the jobseek-materials Skill for one Eligible job with no unresolved items. First obtain the controller-validated materials input list. Use only those frozen batch snapshot and job paths, treat the base CV as the fact source and DOCX template, and treat CV strategies as guidance only. Create and visually verify materials and write only under that job's materials directory. Do not read live profile/ or tracks/, submit, read private/, or delegate.
 """
 
 [agents]

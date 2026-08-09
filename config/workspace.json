@@ -3,7 +3,6 @@
     "applications_directory": "archive/applications",
     "applications_index": "archive/applications.jsonl"
   },
-  "eligible_threshold": 70,
   "hard_exclusions": {
     "location_schedule": "A mandatory location, attendance, schedule, or employment type conflicts with the candidate and track snapshot.",
     "mandatory_credential": "A mandatory licence, certification, clearance, or credential is not established by the candidate snapshot.",
@@ -36,7 +35,7 @@
         "sales-dominated roles",
         "primarily manual roles",
         "unpaid or suspicious roles",
-        "defence roles requiring unsupported citizenship or clearance"
+        "defence roles incompatible with the candidate's stated preference or requiring unsupported citizenship, work rights or clearance"
       ]
     },
     "part-time": {
