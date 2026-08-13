@@ -19,6 +19,6 @@ Default to a concise, targeted CV of about two pages. Use a third page only when
 
 A CV may include `References available upon request.` or a concise equivalent. Do not invent or disclose referee names, positions, phone numbers or email addresses unless the frozen sources show that the user supplied and approved them. Create only materials needed for the role. Omit a Cover Letter when it is not used.
 
-Render and visually inspect every DOCX or PDF deliverable. Check truthfulness, clipping, overflow, page breaks, typography, list hierarchy and indentation, filenames, and readability. For multilevel lists, also verify the DOCX structure or effective paragraph formatting so that every child item has a deeper list level and effective left indent than its parent. Save final files under the job's `materials/` directory.
+Render and visually inspect every DOCX or PDF deliverable. Check truthfulness, clipping, overflow, page breaks, typography, list hierarchy and indentation, filenames, and readability. For multilevel lists, also verify the DOCX structure or effective paragraph formatting so that every child item has a deeper list level and effective left indent than its parent. Save final files under the job's `materials/` directory. Before returning, delete all temporary, rendered, QA, metadata, build, and other intermediate files, leaving only final application deliverables.
 
 Do not fill forms, submit, or delegate.

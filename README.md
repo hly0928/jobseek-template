@@ -6,7 +6,7 @@ JobSeek is a human-supervised Codex workspace for bounded job discovery, truthfu
 
 The workspace is file-driven. One root lead coordinates four named agents while plain JSON, JSONL, Markdown, and document files hold current work. It deliberately avoids a database or complex workflow state machine.
 
-Only one batch may be active. `new-batch` enforces this from batch metadata. The lead and user decide when enough work has been done; merge completed output, archive confirmed applications, rebuild the reviewed-URL index, and run `complete-batch` before creating the next batch. Completion records the frozen batch lifecycle and does not rerun live-profile preflight.
+Only one batch may be active. `new-batch` enforces this from batch metadata. Discovery closeout requires a complete `priority_jobs` report followed by a stop for user direction. The lead and user decide when enough work has been done; merge completed output, archive confirmed applications, and run `complete-batch` before creating the next batch. Completion reconciles final job outcomes into reviewed history, rebuilds the reviewed-URL index, records the frozen batch lifecycle, and does not rerun live-profile preflight.
 
 ## Safety model
 
@@ -27,13 +27,13 @@ Only one batch may be active. `new-batch` enforces this from batch metadata. The
 preflight
 → one new batch
 → bounded discovery + ordinary assessment
+→ report priority jobs and stop for user direction
 → optional exceptional audit
 → materials
 → form review
 → human approval
 → one submission action + confirmation
 → archive
-→ rebuild and validate index
 → complete batch
 → next batch
 ```

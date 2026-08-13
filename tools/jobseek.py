@@ -1104,9 +1104,85 @@ def command_status(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def reconcile_batch_history(batch: Path) -> None:
+    metadata = validate_batch_metadata(batch)
+    track = metadata["track"]
+    config = workspace_config()
+    history_path = ROOT / config["history"]["reviewed_jobs"]
+    history = read_jsonl(history_path)
+    history_by_job = {row.get("job_id"): row for row in history}
+    if len(history_by_job) != len(history):
+        raise JobSeekError("Reviewed history contains a duplicate or missing job_id")
+
+    for job_dir in sorted((batch / "jobs").iterdir() if (batch / "jobs").is_dir() else []):
+        if not job_dir.is_dir():
+            continue
+        job = read_json(job_dir / "job.json")
+        assessment = read_json(job_dir / "assessment.json")
+        if job.get("job_id") != job_dir.name:
+            raise JobSeekError(f"job.json does not match job directory: {job_dir.name}")
+        error = assessment_validation_error(assessment)
+        if error:
+            raise JobSeekError(f"Invalid assessment for {job_dir.name}: {error}")
+        canonical = canonicalize_url(str(job.get("canonical_url") or ""))
+        if canonical["job_id"] != job_dir.name:
+            raise JobSeekError(f"Canonical URL does not match job directory: {job_dir.name}")
+
+        classification = str(assessment["classification"])
+        reasons = assessment.get("reasons") or []
+        reason = reasons[0] if reasons else None
+        audit_path = job_dir / "audit.json"
+        if audit_path.is_file():
+            audit = read_json(audit_path)
+            classification = str(audit.get("outcome") or classification)
+            reason = audit.get("summary") or reason
+        outcome = history_outcome(classification)
+        application_id = None
+        archive_path = job_dir / "archived.json"
+        if archive_path.is_file():
+            archived = read_json(archive_path)
+            application_id = archived.get("application_id")
+            if not isinstance(application_id, str) or not application_id:
+                raise JobSeekError(f"Invalid archive marker for {job_dir.name}")
+            outcome = "applied"
+
+        reviewed_at = normalized_workspace_timestamp(assessment["assessed_at"], config)
+        existing = history_by_job.get(job_dir.name)
+        if existing is None:
+            existing = {
+                "application_id": application_id,
+                "canonical_url": canonical["canonical_url"],
+                "company": job.get("company"),
+                "first_reviewed_at": reviewed_at,
+                "job_id": job_dir.name,
+                "last_reviewed_at": reviewed_at,
+                "listing_id": canonical["listing_id"],
+                "outcome": outcome,
+                "reason": reason,
+                "source": job.get("source") or canonical["source"],
+                "title": job.get("title"),
+                "tracks": [track],
+                "url_aliases": [],
+            }
+            history_by_job[job_dir.name] = existing
+        else:
+            if existing.get("canonical_url") != canonical["canonical_url"]:
+                raise JobSeekError(f"Reviewed history URL conflicts with {job_dir.name}")
+            existing["outcome"] = outcome
+            existing["application_id"] = application_id
+            existing["last_reviewed_at"] = max(str(existing.get("last_reviewed_at") or reviewed_at), reviewed_at)
+            existing["tracks"] = sorted(set(existing.get("tracks") or []) | {track})
+            if reason:
+                existing["reason"] = reason
+
+    write_jsonl(history_path, sorted(history_by_job.values(), key=lambda row: row["job_id"]))
+    rebuild_index()
+
+
 def command_complete_batch(args: argparse.Namespace) -> None:
     batch = resolve_batch(args.batch)
     metadata = require_active_batch(batch)
+    reconcile_batch_history(batch)
     metadata["status"] = "completed"
     metadata["completed_at"] = now_in_workspace_timezone(workspace_config()).isoformat()
     write_json(batch / "batch.json", metadata)

@@ -69,7 +69,7 @@ The normal sequence is:
 1. preflight;
 2. create one batch;
 3. bounded discovery with `jobseek_discovery_assess`;
-4. merge every completed worker output even after a stop threshold, run `status`, and report every `priority_jobs` entry with its outcome, title, company, source, current status, reasons, unresolved items, score when available, and canonical link;
+4. merge every completed worker output even after a stop threshold, run `status`, report every `priority_jobs` entry with its outcome, title, company, source, current status, reasons, unresolved items, score when available, and canonical link, and stop for user direction before audit or application work;
 5. optional exceptional audit with `jobseek_audit`;
 6. materials with `jobseek_materials` for Eligible jobs without unresolved items; it first runs `materials-inputs`, reads only returned frozen snapshot/job paths, uses the base CV as evidence and DOCX template, and treats any applicable strategy as optional guidance only;
 7. form filling and review with `jobseek_submission`;
@@ -77,9 +77,8 @@ The normal sequence is:
 9. one final submission action;
 10. immediate confirmation recording;
 11. archive confirmed applications;
-12. rebuild and validate the reviewed-URL index;
-13. run `complete-batch` to record `status: "completed"` and an offset-aware `completed_at`;
-14. only then create the next batch.
+12. run `complete-batch` to reconcile reviewed history, rebuild the reviewed-URL index, and record `status: "completed"` with an offset-aware `completed_at`;
+13. only then create the next batch.
 
 Before each discovery assignment, run `status`. Every scope must specify source/site, query or role category, location, page/result range or maximum full opens, and remaining assessment capacity. Do not assign discovery after a configured stop threshold or after the lead and user decide enough has been found. Still merge all completed worker output.
 
@@ -132,7 +131,7 @@ Inspect this JobSeek template for first use. Do not create a batch. Tell me whic
 ### Start a new batch
 
 ```text
-Run preflight for the <track> track. If it passes, create a new batch; the command must confirm it is the unique active batch. Then use the named discovery-assess subagent for bounded discovery scopes. Do not perform discovery or assessment in the root thread. Treat scores as advisory ranking information, use stop conditions only to prevent new discovery assignments, merge all completed results, and report every Eligible and Needs Review result with its information and canonical link before preparing any application materials.
+Run preflight for the <track> track. If it passes, create a new batch; the command must confirm it is the unique active batch. Then use the named discovery-assess subagent for bounded discovery scopes. Do not perform discovery or assessment in the root thread. Treat scores as advisory ranking information, use stop conditions only to prevent new discovery assignments, merge all completed results, report every Eligible and Needs Review result with its information and canonical link, and stop for my direction before any audit or application work.
 ```
 
 ### Resume the current batch
@@ -144,7 +143,7 @@ Resume the current batch. Inspect its files and status first. Do not create a ne
 ### Discovery only
 
 ```text
-Continue discovery for the current active batch only. Check status before spawning workers, assign bounded non-overlapping scopes, and use only the jobseek_discovery_assess subagent. Do not assign more work when a configured threshold is reached or the lead and user decide the search is sufficient. Merge all completed worker outputs, including valid overshoot, then run status and report every priority_jobs entry without omission.
+Continue discovery for the current active batch only. Check status before spawning workers, assign bounded non-overlapping scopes, and use only the jobseek_discovery_assess subagent. Do not assign more work when a configured threshold is reached or the lead and user decide the search is sufficient. Merge all completed worker outputs, including valid overshoot, then run status, report every priority_jobs entry without omission, and stop for my direction.
 ```
 
 ### Prepare materials
@@ -180,7 +179,7 @@ Use jobseek_audit to inspect the unclear confirmation without clicking submit ag
 ### Complete the current batch
 
 ```text
-Complete the current batch without creating another one. Merge all completed discovery outputs, give intended jobs clear outcomes, archive confirmed applications, and rebuild the reviewed URL index. Report any remaining unresolved items, then run complete-batch so batch.json records the completed state and timestamp. Do not make completion depend on current live profile files or rerun live-profile preflight as part of complete-batch.
+Complete the current batch without creating another one. Merge all completed discovery outputs, give intended jobs clear outcomes, and archive confirmed applications. Report any remaining unresolved items, then run complete-batch so final outcomes are reconciled into reviewed history, the reviewed URL index is rebuilt, and batch.json records the completed state and timestamp. Do not make completion depend on current live profile files or rerun live-profile preflight as part of complete-batch.
 ```
 
 ## Troubleshooting

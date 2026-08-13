@@ -152,7 +152,16 @@ class JobSeekTest(unittest.TestCase):
         jobseek.atomic_write(job_dir / "advertisement.md", "# Complete advertisement\n")
         assessment = self.assessed(f"https://seek.com.au/job/{number}")["assessment"]
         jobseek.write_json(job_dir / "assessment.json", assessment)
-        jobseek.write_json(job_dir / "job.json", {"job_id": job_dir.name, "fully_assessed": True})
+        jobseek.write_json(job_dir / "job.json", {
+            "job_id": job_dir.name,
+            "canonical_url": f"https://seek.com.au/job/{number}",
+            "company": "Example Co",
+            "fully_assessed": True,
+            "source": "SEEK",
+            "status": "assessed",
+            "title": "Support Officer",
+            "track": "it",
+        })
         return job_dir
 
     def add_confirmation(self, batch, number, status, **extra):
@@ -625,6 +634,30 @@ class JobSeekTest(unittest.TestCase):
         with mock.patch.object(jobseek, "command_preflight", side_effect=AssertionError("live preflight called")):
             jobseek.command_complete_batch(argparse.Namespace(batch=batch.name))
         self.assertEqual(jobseek.validate_batch_metadata(batch)["status"], "completed")
+
+    def test_complete_batch_reconciles_final_history_outcomes(self):
+        batch = self.make_batch()
+        skipped = self.add_assessed_job(batch, 1)
+        jobseek.write_json(skipped / "audit.json", {
+            "outcome": "Skipped",
+            "remaining_items": [],
+            "summary": "Mandatory experience is not established.",
+        })
+        withdrawn = self.add_assessed_job(batch, 2)
+        jobseek.write_json(withdrawn / "audit.json", {
+            "outcome": "Withdrawn",
+            "remaining_items": [],
+            "summary": "The user chose not to continue.",
+        })
+        jobseek.command_complete_batch(argparse.Namespace(batch=batch.name))
+        history = {row["job_id"]: row for row in jobseek.read_jsonl(self.root / "history/reviewed-jobs.jsonl")}
+        self.assertEqual(history["seek-1"]["outcome"], "skipped")
+        self.assertEqual(history["seek-1"]["reason"], "Mandatory experience is not established.")
+        self.assertEqual(history["seek-2"]["outcome"], "withdrawn")
+        self.assertEqual(jobseek.read_json(self.root / "history/reviewed-url-index.json"), {
+            "seek:1": "seek-1",
+            "seek:2": "seek-2",
+        })
 
     def test_discovery_results_include_all_eligible_and_needs_review_jobs(self):
         batch = self.make_batch()
